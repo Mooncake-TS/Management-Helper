@@ -266,10 +266,12 @@ def item_comparison(
         .rename(columns={"수량": "전년 수량", amount_col: "전년 금액"})
     )
     merged = current.join(previous, how="outer").fillna(0).reset_index()
-    merged["수량 성장률"] = (merged["금년 수량"] / merged["전년 수량"] - 1).where(
+    merged["수량 변화량"] = merged["금년 수량"] - merged["전년 수량"]
+    merged["수량 변화율"] = (merged["금년 수량"] / merged["전년 수량"] - 1).where(
         merged["전년 수량"].ne(0)
     )
-    merged["금액 성장률"] = (merged["금년 금액"] / merged["전년 금액"] - 1).where(
+    merged["금액 변화량"] = merged["금년 금액"] - merged["전년 금액"]
+    merged["금액 변화율"] = (merged["금년 금액"] / merged["전년 금액"] - 1).where(
         merged["전년 금액"].ne(0)
     )
     merged["금년 평균단가"] = (merged["금년 금액"] / merged["금년 수량"]).where(
@@ -279,6 +281,83 @@ def item_comparison(
         merged["전년 수량"].ne(0)
     )
     return merged.sort_values("금년 금액", ascending=False)
+
+
+def item_yoy_chart(
+    frame: pd.DataFrame,
+    year: int,
+    measure: str,
+) -> go.Figure:
+    if measure == "quantity":
+        current_col = "금년 수량"
+        previous_col = "전년 수량"
+        change_col = "수량 변화량"
+        rate_col = "수량 변화율"
+        title = "선택 품목 판매수량 전년 비교"
+        unit = "개"
+        current_color = "#2563EB"
+    else:
+        current_col = "금년 금액"
+        previous_col = "전년 금액"
+        change_col = "금액 변화량"
+        rate_col = "금액 변화율"
+        title = "선택 품목 매출액 전년 비교"
+        unit = "원"
+        current_color = "#0F766E"
+
+    chart_data = frame.copy()
+    chart_data["비교 표시"] = chart_data.apply(
+        lambda row: f"{row['품목명']} [{row['표준SKU']}]", axis=1
+    )
+    chart_data["비교 크기"] = chart_data[[current_col, previous_col]].max(axis=1)
+    chart_data = chart_data.sort_values("비교 크기")
+    chart_data["변화율 표시"] = chart_data[rate_col].map(
+        lambda value: "비교 기준 없음" if pd.isna(value) else f"{value:+.1%}"
+    )
+    current_custom = list(
+        zip(chart_data[change_col], chart_data["변화율 표시"], strict=False)
+    )
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=chart_data[previous_col],
+            y=chart_data["비교 표시"],
+            name=str(year - 1),
+            orientation="h",
+            marker_color="#CBD5E1",
+            hovertemplate=(
+                "%{y}<br>" + str(year - 1) + f"년 %{{x:,.0f}}{unit}<extra></extra>"
+            ),
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=chart_data[current_col],
+            y=chart_data["비교 표시"],
+            name=str(year),
+            orientation="h",
+            marker_color=current_color,
+            customdata=current_custom,
+            hovertemplate=(
+                "%{y}<br>"
+                + str(year)
+                + f"년 %{{x:,.0f}}{unit}<br>변화 %{{customdata[0]:+,.0f}}{unit} "
+                + "(%{customdata[1]})<extra></extra>"
+            ),
+        )
+    )
+    fig.update_layout(
+        title=title,
+        height=max(380, 135 + len(chart_data) * 44),
+        margin=dict(l=15, r=15, t=60, b=20),
+        barmode="group",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis_title=f"수량({unit})" if measure == "quantity" else f"금액({unit})",
+        yaxis_title=None,
+        xaxis_tickformat=",.0f",
+    )
+    return fig
 
 
 def build_product_catalog(frame: pd.DataFrame) -> pd.DataFrame:
@@ -301,6 +380,508 @@ def build_product_catalog(frame: pd.DataFrame) -> pd.DataFrame:
 
     catalog["선택표시"] = catalog.apply(make_label, axis=1)
     return catalog
+
+
+def render_forecast_tab(sales: pd.DataFrame) -> None:
+    st.markdown("### 예측 발주")
+    st.caption(
+        "여러 품목을 한 번에 선택하고, 각 품목에 연결할 전년도 비교 품목과 재고를 입력해 "
+        "추천 발주수량을 계산합니다."
+    )
+
+    product_catalog = build_product_catalog(sales)
+    product_categories = sorted(product_catalog["유형"].dropna().unique())
+    if not product_categories:
+        st.info("예측에 사용할 품목이 없습니다.")
+        return
+
+    preferred_sku = "MAPSS03ZZZ230"
+    preferred_categories = product_catalog.loc[
+        product_catalog["표준SKU"].eq(preferred_sku), "유형"
+    ]
+    default_category = (
+        preferred_categories.iloc[0]
+        if not preferred_categories.empty
+        else product_categories[0]
+    )
+
+    latest_sales_date = sales["거래일자"].dropna().max().normalize()
+    today = pd.Timestamp.today().normalize()
+    default_forecast_start = max(latest_sales_date + pd.Timedelta(days=1), today)
+    default_forecast_end = (
+        default_forecast_start + pd.DateOffset(months=3) - pd.Timedelta(days=1)
+    )
+
+    filter_column, date_column = st.columns([1, 1.25])
+    with filter_column:
+        forecast_category = st.selectbox(
+            "예측 상품 유형",
+            product_categories,
+            index=product_categories.index(default_category),
+            key="forecast_category",
+        )
+    with date_column:
+        forecast_dates = st.date_input(
+            "예측 기간",
+            value=(default_forecast_start.date(), default_forecast_end.date()),
+            help="선택한 전년 비교 품목의 작년 동일 달·일 구간을 기준으로 계산합니다.",
+            key="forecast_dates",
+        )
+
+    if isinstance(forecast_dates, (tuple, list)) and len(forecast_dates) == 2:
+        forecast_start, forecast_end = forecast_dates
+    elif isinstance(forecast_dates, (tuple, list)) and len(forecast_dates) == 1:
+        forecast_start = forecast_end = forecast_dates[0]
+        st.info("종료일을 선택하면 기간 전체를 예측할 수 있습니다.")
+    else:
+        forecast_start = forecast_end = forecast_dates
+
+    category_catalog = product_catalog[
+        product_catalog["유형"].eq(forecast_category)
+    ].copy()
+    if category_catalog.empty:
+        st.info("선택한 유형에 예측할 품목이 없습니다.")
+        return
+
+    st.markdown("#### 1. 예측할 품목 선택")
+    st.caption("체크한 품목을 한 번에 계산합니다. 품목명뿐 아니라 품목코드와 옵션도 함께 확인해 주세요.")
+
+    selector = category_catalog[
+        ["표준SKU", "품목명", "모델번호", "COLOR", "SIZE"]
+    ].copy()
+    selector.insert(0, "선택", False)
+    preferred_mask = selector["표준SKU"].eq(preferred_sku)
+    if preferred_mask.any():
+        selector.loc[preferred_mask, "선택"] = True
+    else:
+        selector.loc[selector.index[0], "선택"] = True
+
+    selected_rows = st.data_editor(
+        selector,
+        width="stretch",
+        hide_index=True,
+        height=min(390, 84 + len(selector) * 35),
+        key=f"forecast_item_selector_{forecast_category}",
+        disabled=["표준SKU", "품목명", "모델번호", "COLOR", "SIZE"],
+        column_config={
+            "선택": st.column_config.CheckboxColumn("선택", width="small"),
+            "표준SKU": st.column_config.TextColumn("품목코드", width="medium"),
+            "품목명": st.column_config.TextColumn("품목명", width="large"),
+            "모델번호": st.column_config.TextColumn("모델번호", width="medium"),
+            "COLOR": st.column_config.TextColumn("색상", width="small"),
+            "SIZE": st.column_config.TextColumn("사이즈", width="small"),
+        },
+    )
+    selected_skus = selected_rows.loc[selected_rows["선택"], "표준SKU"].tolist()
+    if not selected_skus:
+        st.info("예측할 품목을 하나 이상 체크해 주세요.")
+        return
+
+    selected_catalog = category_catalog[
+        category_catalog["표준SKU"].isin(selected_skus)
+    ].copy()
+    st.success(f"{len(selected_catalog):,}개 품목을 선택했습니다.")
+
+    all_labels = product_catalog["선택표시"].tolist()
+    label_to_sku = dict(
+        zip(product_catalog["선택표시"], product_catalog["표준SKU"], strict=False)
+    )
+    sku_to_label = dict(
+        zip(product_catalog["표준SKU"], product_catalog["선택표시"], strict=False)
+    )
+    sku_to_name = dict(
+        zip(product_catalog["표준SKU"], product_catalog["품목명"], strict=False)
+    )
+
+    st.markdown("#### 2. 전년 비교 품목과 재고 입력")
+    st.caption(
+        "‘전년 비교 품목’은 품목별로 바꿀 수 있습니다. 올해와 작년의 품목명이 달라도 "
+        "같은 역할의 상품을 직접 연결해 주세요."
+    )
+    parameters = pd.DataFrame(
+        [
+            {
+                "예측 품목": sku_to_label[sku],
+                "전년 비교 품목": sku_to_label[sku],
+                "현재고": 0,
+                "입고예정": 0,
+                "발주단위": 1,
+            }
+            for sku in selected_skus
+        ]
+    )
+    selection_token = str(abs(hash(tuple(sorted(selected_skus)))))
+    edited_parameters = st.data_editor(
+        parameters,
+        width="stretch",
+        hide_index=True,
+        num_rows="fixed",
+        key=f"forecast_parameters_{selection_token}",
+        disabled=["예측 품목"],
+        column_config={
+            "예측 품목": st.column_config.TextColumn(width="medium"),
+            "전년 비교 품목": st.column_config.SelectboxColumn(
+                width="medium",
+                options=all_labels,
+                required=True,
+                help="이 품목의 전년도 수요 기준으로 사용할 상품입니다.",
+            ),
+            "현재고": st.column_config.NumberColumn(min_value=0, step=1, format="%,.0f"),
+            "입고예정": st.column_config.NumberColumn(min_value=0, step=1, format="%,.0f"),
+            "발주단위": st.column_config.NumberColumn(min_value=1, step=1, format="%,.0f"),
+        },
+    )
+
+    assumption_box = st.container(border=True)
+    with assumption_box:
+        st.markdown("#### 3. 공통 발주 가정")
+        assumption_columns = st.columns(3)
+        with assumption_columns[0]:
+            growth_mode = st.selectbox(
+                "성장률 반영 방식",
+                ["올해 추세 자동 반영", "작년 수준 유지", "직접 입력"],
+                key="batch_growth_mode",
+            )
+        with assumption_columns[1]:
+            if growth_mode == "직접 입력":
+                manual_growth_percent = float(
+                    st.number_input(
+                        "예상 성장률(%)",
+                        min_value=-100.0,
+                        value=0.0,
+                        step=1.0,
+                        key="batch_manual_growth",
+                    )
+                )
+            else:
+                manual_growth_percent = 0.0
+                st.metric(
+                    "성장률 적용",
+                    "품목별 자동" if growth_mode == "올해 추세 자동 반영" else "0.0%",
+                )
+        with assumption_columns[2]:
+            safety_percent = float(
+                st.number_input(
+                    "안전재고율(%)",
+                    min_value=0.0,
+                    value=10.0,
+                    step=1.0,
+                    key="batch_safety_rate",
+                )
+            )
+
+        if growth_mode == "올해 추세 자동 반영":
+            st.caption(
+                "각 행의 올해 예측 품목 누적 판매량과 선택한 전년 비교 품목의 전년 동기 판매량을 "
+                "비교해 품목별 성장률을 계산합니다."
+            )
+        elif growth_mode == "직접 입력":
+            st.caption(f"선택한 모든 품목에 {manual_growth_percent:+.1f}%를 동일하게 적용합니다.")
+
+    growth_as_of = min(
+        latest_sales_date,
+        pd.Timestamp(forecast_start) - pd.Timedelta(days=1),
+    )
+    forecasts: list[dict] = []
+
+    def safe_int(value, minimum: int) -> int:
+        number = pd.to_numeric(value, errors="coerce")
+        if pd.isna(number):
+            return minimum
+        return max(minimum, int(number))
+
+    for _, row in edited_parameters.iterrows():
+        target_label = str(row["예측 품목"])
+        comparison_label = str(row["전년 비교 품목"])
+        target_sku = label_to_sku[target_label]
+        comparison_sku = label_to_sku[comparison_label]
+        growth_info = calculate_ytd_growth(
+            sales,
+            target_sku,
+            growth_as_of,
+            previous_sku=comparison_sku,
+        )
+        if growth_mode == "올해 추세 자동 반영":
+            applied_growth = float(growth_info["growth_rate"])
+        elif growth_mode == "작년 수준 유지":
+            applied_growth = 0.0
+        else:
+            applied_growth = manual_growth_percent / 100
+
+        forecast = calculate_order_recommendation(
+            sales=sales,
+            sku=comparison_sku,
+            forecast_start=forecast_start,
+            forecast_end=forecast_end,
+            current_stock=safe_int(row["현재고"], 0),
+            incoming_stock=safe_int(row["입고예정"], 0),
+            growth_rate=applied_growth,
+            safety_rate=safety_percent / 100,
+            order_unit=safe_int(row["발주단위"], 1),
+        )
+        forecast.update(
+            {
+                "target_sku": target_sku,
+                "target_label": target_label,
+                "target_name": sku_to_name.get(target_sku, target_sku),
+                "comparison_sku": comparison_sku,
+                "comparison_label": comparison_label,
+                "comparison_name": sku_to_name.get(comparison_sku, comparison_sku),
+                "growth_info": growth_info,
+                "applied_growth": applied_growth,
+            }
+        )
+        forecasts.append(forecast)
+
+    total_recommended = sum(item["recommended_order"] for item in forecasts)
+    total_demand = sum(item["forecast_demand"] for item in forecasts)
+    total_target = sum(item["target_stock"] for item in forecasts)
+    total_available = sum(item["available_stock"] for item in forecasts)
+
+    st.markdown(
+        f"""
+        <div class="recommend-card">
+            <div class="recommend-label">선택 {len(forecasts):,}개 품목 추천 발주 합계</div>
+            <div class="recommend-number">{total_recommended:,.0f}개</div>
+            <div class="recommend-sub">
+                {pd.Timestamp(forecast_start):%Y-%m-%d} ~ {pd.Timestamp(forecast_end):%Y-%m-%d}
+                · 예상수요 {total_demand:,.0f}개 · 안전재고 포함 목표 {total_target:,.0f}개
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    total_metrics = st.columns(3)
+    total_metrics[0].metric("성장 반영 예상수요 합계", f"{total_demand:,.0f}개")
+    total_metrics[1].metric("현재고 + 입고예정 합계", f"{total_available:,.0f}개")
+    total_metrics[2].metric("추천 발주 합계", f"{total_recommended:,.0f}개")
+
+    summary = pd.DataFrame(
+        [
+            {
+                "예측 품목": item["target_label"],
+                "전년 비교 품목": item["comparison_label"],
+                "전년 판매": item["last_year_demand"],
+                "적용 변화율": item["applied_growth"] * 100,
+                "예상수요": item["forecast_demand"],
+                "안전재고": item["safety_stock"],
+                "현재고": item["current_stock"],
+                "입고예정": item["incoming_stock"],
+                "목표재고": item["target_stock"],
+                "추천발주": item["recommended_order"],
+                "예상잔여": item["expected_end_stock"],
+            }
+            for item in forecasts
+        ]
+    )
+    st.markdown("#### 품목별 추천 결과")
+    st.dataframe(
+        summary,
+        width="stretch",
+        hide_index=True,
+        height=min(430, 84 + len(summary) * 35),
+        column_config={
+            "예측 품목": st.column_config.TextColumn(width="large"),
+            "전년 비교 품목": st.column_config.TextColumn(width="large"),
+            "전년 판매": st.column_config.NumberColumn(format="%,.0f개"),
+            "적용 변화율": st.column_config.NumberColumn(format="%.1f%%"),
+            "예상수요": st.column_config.NumberColumn(format="%,.0f개"),
+            "안전재고": st.column_config.NumberColumn(format="%,.0f개"),
+            "현재고": st.column_config.NumberColumn(format="%,.0f개"),
+            "입고예정": st.column_config.NumberColumn(format="%,.0f개"),
+            "목표재고": st.column_config.NumberColumn(format="%,.0f개"),
+            "추천발주": st.column_config.NumberColumn(format="%,.0f개"),
+            "예상잔여": st.column_config.NumberColumn(format="%,.0f개"),
+        },
+    )
+
+    summary_chart = summary.copy()
+    summary_chart["표시 품목"] = [
+        f"{item['target_name']} [{item['target_sku']}]" for item in forecasts
+    ]
+    summary_chart = summary_chart.sort_values("목표재고")
+    summary_fig = go.Figure()
+    summary_fig.add_trace(
+        go.Bar(
+            x=summary_chart["예상수요"],
+            y=summary_chart["표시 품목"],
+            name="예상수요",
+            orientation="h",
+            marker_color="#2563EB",
+            hovertemplate="%{y}<br>예상수요 %{x:,.0f}개<extra></extra>",
+        )
+    )
+    summary_fig.add_trace(
+        go.Bar(
+            x=summary_chart["현재고"] + summary_chart["입고예정"],
+            y=summary_chart["표시 품목"],
+            name="현재고+입고예정",
+            orientation="h",
+            marker_color="#10B981",
+            hovertemplate="%{y}<br>확보수량 %{x:,.0f}개<extra></extra>",
+        )
+    )
+    summary_fig.add_trace(
+        go.Bar(
+            x=summary_chart["추천발주"],
+            y=summary_chart["표시 품목"],
+            name="추천발주",
+            orientation="h",
+            marker_color="#F59E0B",
+            hovertemplate="%{y}<br>추천발주 %{x:,.0f}개<extra></extra>",
+        )
+    )
+    summary_fig.update_layout(
+        title="품목별 예상수요·확보수량·추천발주 비교",
+        height=max(380, 135 + len(summary_chart) * 44),
+        margin=dict(l=15, r=15, t=60, b=20),
+        barmode="group",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis_title="수량(개)",
+        yaxis_title=None,
+        xaxis_tickformat=",.0f",
+    )
+    st.plotly_chart(summary_fig, width="stretch", key="forecast_batch_summary_chart")
+
+    zero_history = [item for item in forecasts if item["last_year_demand"] == 0]
+    if zero_history:
+        st.warning(
+            "전년 비교기간 판매가 0개인 연결이 있습니다: "
+            + ", ".join(
+                f"{item['target_name']} → {item['comparison_name']}" for item in zero_history
+            )
+            + ". 비교 품목을 다시 선택하거나 직접 성장률을 적용해 주세요."
+        )
+
+    st.markdown("#### 품목별 상세 근거")
+    detail_labels = [item["target_label"] for item in forecasts]
+    detail_target = st.selectbox(
+        "상세 그래프 품목",
+        detail_labels,
+        key="forecast_detail_target",
+    )
+    selected_forecast = next(
+        item for item in forecasts if item["target_label"] == detail_target
+    )
+
+    detail_metrics = st.columns(4)
+    detail_metrics[0].metric(
+        "전년 비교품목 판매",
+        f"{selected_forecast['last_year_demand']:,.0f}개",
+    )
+    detail_metrics[1].metric(
+        "성장 반영 예상수요",
+        f"{selected_forecast['forecast_demand']:,.0f}개",
+        f"{selected_forecast['applied_growth']:+.1%} 적용",
+    )
+    detail_metrics[2].metric(
+        "안전재고 포함 목표",
+        f"{selected_forecast['target_stock']:,.0f}개",
+    )
+    detail_metrics[3].metric(
+        "추천 발주",
+        f"{selected_forecast['recommended_order']:,.0f}개",
+    )
+
+    weekly_column, stock_column = st.columns([1.35, 1])
+    with weekly_column:
+        weekly = selected_forecast["weekly"]
+        weekly_fig = go.Figure()
+        weekly_fig.add_trace(
+            go.Bar(
+                x=weekly["표시 주차"],
+                y=weekly["작년 판매량"],
+                name="전년 비교품목 판매",
+                marker_color="#CBD5E1",
+                hovertemplate="%{x}<br>전년 %{y:,.0f}개<extra></extra>",
+            )
+        )
+        weekly_fig.add_trace(
+            go.Scatter(
+                x=weekly["표시 주차"],
+                y=weekly["예상 판매량"],
+                name="예상 판매량",
+                mode="lines+markers",
+                line=dict(color="#2563EB", width=3),
+                marker=dict(size=8),
+                hovertemplate="%{x}<br>예상 %{y:,.1f}개<extra></extra>",
+            )
+        )
+        weekly_fig.update_layout(
+            title="전년 비교품목 주차별 판매와 예상수요",
+            height=410,
+            margin=dict(l=15, r=15, t=55, b=20),
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            xaxis_title=None,
+            yaxis_title=None,
+            yaxis_tickformat=",.0f",
+        )
+        st.plotly_chart(
+            weekly_fig,
+            width="stretch",
+            key=f"forecast_weekly_{selected_forecast['target_sku']}",
+        )
+
+    with stock_column:
+        stock_fig = go.Figure()
+        for name, value, color in [
+            ("현재고", selected_forecast["current_stock"], "#60A5FA"),
+            ("입고예정", selected_forecast["incoming_stock"], "#A7F3D0"),
+            ("추천발주", selected_forecast["recommended_order"], "#FBBF24"),
+        ]:
+            stock_fig.add_trace(
+                go.Bar(
+                    y=["확보 수량"],
+                    x=[value],
+                    name=name,
+                    orientation="h",
+                    marker_color=color,
+                    hovertemplate=f"{name} %{{x:,.0f}}개<extra></extra>",
+                )
+            )
+        stock_fig.add_vline(
+            x=selected_forecast["target_stock"],
+            line_dash="dash",
+            line_color="#DC2626",
+            annotation_text=f"목표 {selected_forecast['target_stock']:,.0f}개",
+            annotation_position="top",
+        )
+        stock_fig.update_layout(
+            title="목표재고 충족 구성",
+            height=410,
+            margin=dict(l=15, r=15, t=55, b=20),
+            barmode="stack",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            xaxis_title="수량",
+            yaxis_title=None,
+            xaxis_tickformat=",.0f",
+        )
+        st.plotly_chart(
+            stock_fig,
+            width="stretch",
+            key=f"forecast_stock_{selected_forecast['target_sku']}",
+        )
+
+    growth_info = selected_forecast["growth_info"]
+    with st.expander("선택 품목 계산 근거 자세히 보기"):
+        st.markdown(
+            f"""
+            **예측 품목:** {selected_forecast['target_label']}  
+            **전년 비교 품목:** {selected_forecast['comparison_label']}  
+            **전년 비교기간:** {selected_forecast['previous_start']:%Y-%m-%d} ~ {selected_forecast['previous_end']:%Y-%m-%d}
+
+            1. 전년 비교 품목 판매량: **{selected_forecast['last_year_demand']:,.0f}개**
+            2. 성장률 반영 예상수요: `{selected_forecast['last_year_demand']:,.0f} × (1 {selected_forecast['applied_growth']:+.1%})` → **{selected_forecast['forecast_demand']:,.0f}개**
+            3. 안전재고: `{selected_forecast['forecast_demand']:,.0f} × {selected_forecast['safety_rate']:.1%}` → **{selected_forecast['safety_stock']:,.0f}개**
+            4. 목표재고: **{selected_forecast['target_stock']:,.0f}개**
+            5. 현재고·입고예정 차감 후 부족량: **{selected_forecast['shortage']:,.0f}개**
+            6. 발주단위 {selected_forecast['order_unit']:,}개로 올림: **{selected_forecast['recommended_order']:,.0f}개**
+
+            자동 성장률 참고 구간: 올해 예측 품목 {growth_info['current_quantity']:,.0f}개 ÷ 전년 비교 품목 {growth_info['previous_quantity']:,.0f}개
+            """
+        )
 
 
 st.title("테마상품 매입·매출 대시보드")
@@ -576,62 +1157,78 @@ with detail_tab:
                 f"매출액은 {amount_growth:+.1%}입니다."
             )
 
-    chart_column, table_column = st.columns([1, 1.4])
-    with chart_column:
-        top_items = detail.head(12).sort_values("금년 금액")
-        item_fig = go.Figure(
-            go.Bar(
-                x=top_items["금년 금액"],
-                y=top_items["품목명"],
-                orientation="h",
-                marker_color="#38BDF8",
-                hovertemplate="%{y}<br>%{x:,.0f}원<extra></extra>",
-            )
-        )
-        item_fig.update_layout(
-            title=f"{base_year}년 {detail_month}월 주요 매출 품목",
-            height=510,
-            margin=dict(l=10, r=10, t=55, b=20),
-            xaxis_tickformat=",.0f",
-            yaxis_title=None,
-            xaxis_title=None,
-        )
-        st.plotly_chart(item_fig, width="stretch")
+    st.markdown("#### 비교할 품목 선택")
+    st.caption("왼쪽 체크박스를 켠 품목만 아래 수량·금액 그래프에서 비교합니다.")
 
-    with table_column:
+    if detail.empty:
+        st.info("선택한 월에는 비교할 판매 내역이 없습니다.")
+    else:
         display = detail[
             [
+                "표준SKU",
                 "품목명",
                 "금년 수량",
                 "전년 수량",
-                "수량 성장률",
+                "수량 변화량",
+                "수량 변화율",
                 "금년 금액",
                 "전년 금액",
-                "금액 성장률",
-                "금년 평균단가",
-                "전년 평균단가",
+                "금액 변화량",
+                "금액 변화율",
             ]
         ].copy()
-        display["수량 성장률"] = display["수량 성장률"] * 100
-        display["금액 성장률"] = display["금액 성장률"] * 100
-        st.dataframe(
+        display.insert(0, "선택", False)
+        display.loc[display.index[: min(5, len(display))], "선택"] = True
+        display["수량 변화율"] = display["수량 변화율"] * 100
+        display["금액 변화율"] = display["금액 변화율"] * 100
+
+        selected_display = st.data_editor(
             display,
             width="stretch",
             hide_index=True,
-            height=510,
+            height=min(560, 84 + len(display) * 35),
+            key=f"detail_item_selector_{base_year}_{detail_month}",
+            disabled=[column for column in display.columns if column != "선택"],
             column_config={
+                "선택": st.column_config.CheckboxColumn("선택", width="small"),
+                "표준SKU": st.column_config.TextColumn("품목코드", width="medium"),
+                "품목명": st.column_config.TextColumn("품목명", width="large"),
                 "금년 수량": st.column_config.NumberColumn(format="%,.0f"),
                 "전년 수량": st.column_config.NumberColumn(format="%,.0f"),
-                "수량 성장률": st.column_config.NumberColumn(format="%.1f%%"),
+                "수량 변화량": st.column_config.NumberColumn(format="%,.0f"),
+                "수량 변화율": st.column_config.NumberColumn(format="%.1f%%"),
                 "금년 금액": st.column_config.NumberColumn(format="%,.0f원"),
                 "전년 금액": st.column_config.NumberColumn(format="%,.0f원"),
-                "금액 성장률": st.column_config.NumberColumn(format="%.1f%%"),
-                "금년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
-                "전년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
+                "금액 변화량": st.column_config.NumberColumn(format="%,.0f원"),
+                "금액 변화율": st.column_config.NumberColumn(format="%.1f%%"),
             },
         )
 
+        selected_skus = selected_display.loc[selected_display["선택"], "표준SKU"].tolist()
+        selected_detail = detail[detail["표준SKU"].isin(selected_skus)].copy()
+        if selected_detail.empty:
+            st.info("비교할 품목을 하나 이상 체크해 주세요.")
+        else:
+            st.caption(f"현재 {len(selected_detail):,}개 품목을 비교하고 있습니다.")
+            quantity_column, amount_column = st.columns(2)
+            with quantity_column:
+                st.plotly_chart(
+                    item_yoy_chart(selected_detail, base_year, "quantity"),
+                    width="stretch",
+                    key=f"detail_quantity_yoy_{base_year}_{detail_month}",
+                )
+            with amount_column:
+                st.plotly_chart(
+                    item_yoy_chart(selected_detail, base_year, "amount"),
+                    width="stretch",
+                    key=f"detail_amount_yoy_{base_year}_{detail_month}",
+                )
+
 with forecast_tab:
+    render_forecast_tab(sales)
+
+# 이전 단일 품목 화면은 새 복수 품목 화면으로 교체했습니다.
+if False:
     st.markdown("### 예측 발주")
     st.caption(
         "작년 같은 기간의 실제 판매량에 올해 판매 추세와 안전재고를 반영한 뒤, "

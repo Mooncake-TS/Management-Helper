@@ -12,20 +12,27 @@ def _quantity_sum(frame: pd.DataFrame) -> float:
 
 def calculate_ytd_growth(
     sales: pd.DataFrame,
-    sku: str,
+    current_sku: str,
     as_of: date | pd.Timestamp,
+    previous_sku: str | None = None,
 ) -> dict:
     as_of_date = pd.Timestamp(as_of).normalize()
     current_start = pd.Timestamp(year=as_of_date.year, month=1, day=1)
     previous_start = current_start - pd.DateOffset(years=1)
     previous_end = as_of_date - pd.DateOffset(years=1)
+    comparison_sku = previous_sku or current_sku
 
-    selected = sales[sales["표준SKU"].eq(sku)]
     current_qty = _quantity_sum(
-        selected[selected["거래일자"].between(current_start, as_of_date)]
+        sales[
+            sales["표준SKU"].eq(current_sku)
+            & sales["거래일자"].between(current_start, as_of_date)
+        ]
     )
     previous_qty = _quantity_sum(
-        selected[selected["거래일자"].between(previous_start, previous_end)]
+        sales[
+            sales["표준SKU"].eq(comparison_sku)
+            & sales["거래일자"].between(previous_start, previous_end)
+        ]
     )
 
     growth_rate = current_qty / previous_qty - 1 if previous_qty > 0 else 0.0
@@ -38,6 +45,8 @@ def calculate_ytd_growth(
         "previous_quantity": previous_qty,
         "growth_rate": growth_rate,
         "has_comparison": previous_qty > 0,
+        "current_sku": current_sku,
+        "previous_sku": comparison_sku,
     }
 
 
