@@ -1271,7 +1271,8 @@ with detail_tab:
                 ),
                 xaxis_title="매출액(원)",
                 yaxis_title=None,
-                xaxis_tickformat=",.0s",
+                xaxis_tickformat=",.0f",
+                xaxis_separatethousands=True,
             )
             st.plotly_chart(
                 comparison_fig,
@@ -1364,7 +1365,8 @@ with detail_tab:
             margin=dict(l=10, r=10, t=20, b=25),
             xaxis_title="전년 동월 대비 매출 증감액(원)",
             yaxis_title=None,
-            xaxis_tickformat="+,.0s",
+            xaxis_tickformat="+,.0f",
+            xaxis_separatethousands=True,
         )
         st.plotly_chart(
             contribution_fig,
