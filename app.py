@@ -297,81 +297,56 @@ def item_comparison(
     return merged.sort_values("금년 금액", ascending=False)
 
 
-def item_yoy_chart(
+def category_month_comparison(
     frame: pd.DataFrame,
     year: int,
-    measure: str,
-) -> go.Figure:
-    if measure == "quantity":
-        current_col = "금년 수량"
-        previous_col = "전년 수량"
-        change_col = "수량 변화량"
-        rate_col = "수량 변화율"
-        title = "선택 품목 판매수량 전년 비교"
-        unit = "개"
-        current_color = "#2563EB"
-    else:
-        current_col = "금년 금액"
-        previous_col = "전년 금액"
-        change_col = "금액 변화량"
-        rate_col = "금액 변화율"
-        title = "선택 품목 매출액 전년 비교"
-        unit = "원"
-        current_color = "#0F766E"
+    month: int,
+    amount_col: str,
+) -> pd.DataFrame:
+    working = frame.copy()
+    working["유형"] = working["유형"].fillna("기타용품").replace("", "기타용품")
 
-    chart_data = frame.copy()
-    chart_data["비교 표시"] = chart_data.apply(
-        lambda row: f"{row['품목명']} [{row['표준SKU']}]", axis=1
+    current = (
+        working[working["연도"].eq(year) & working["월"].eq(month)]
+        .groupby("유형", observed=True)[["수량", amount_col]]
+        .sum()
+        .rename(columns={"수량": "금년 수량", amount_col: "금년 금액"})
     )
-    chart_data["비교 크기"] = chart_data[[current_col, previous_col]].max(axis=1)
-    chart_data = chart_data.sort_values("비교 크기")
-    chart_data["변화율 표시"] = chart_data[rate_col].map(
-        lambda value: "비교 기준 없음" if pd.isna(value) else f"{value:+.1%}"
+    previous = (
+        working[working["연도"].eq(year - 1) & working["월"].eq(month)]
+        .groupby("유형", observed=True)[["수량", amount_col]]
+        .sum()
+        .rename(columns={"수량": "전년 수량", amount_col: "전년 금액"})
     )
-    current_custom = list(
-        zip(chart_data[change_col], chart_data["변화율 표시"], strict=False)
+    merged = current.join(previous, how="outer").fillna(0).reset_index()
+    merged["수량 변화량"] = merged["금년 수량"] - merged["전년 수량"]
+    merged["수량 변화율"] = (merged["금년 수량"] / merged["전년 수량"] - 1).where(
+        merged["전년 수량"].ne(0)
+    )
+    merged["금액 변화량"] = merged["금년 금액"] - merged["전년 금액"]
+    merged["금액 변화율"] = (merged["금년 금액"] / merged["전년 금액"] - 1).where(
+        merged["전년 금액"].ne(0)
     )
 
-    fig = go.Figure()
-    fig.add_trace(
-        go.Bar(
-            x=chart_data[previous_col],
-            y=chart_data["비교 표시"],
-            name=str(year - 1),
-            orientation="h",
-            marker_color="#CBD5E1",
-            hovertemplate=(
-                "%{y}<br>" + str(year - 1) + f"년 %{{x:,.0f}}{unit}<extra></extra>"
-            ),
-        )
+    current_total = float(merged["금년 금액"].sum())
+    previous_total = float(merged["전년 금액"].sum())
+    merged["금년 구성비"] = (
+        merged["금년 금액"] / current_total if current_total else 0.0
     )
-    fig.add_trace(
-        go.Bar(
-            x=chart_data[current_col],
-            y=chart_data["비교 표시"],
-            name=str(year),
-            orientation="h",
-            marker_color=current_color,
-            customdata=current_custom,
-            hovertemplate=(
-                "%{y}<br>"
-                + str(year)
-                + f"년 %{{x:,.0f}}{unit}<br>변화 %{{customdata[0]:+,.0f}}{unit} "
-                + "(%{customdata[1]})<extra></extra>"
-            ),
-        )
+    merged["전년 구성비"] = (
+        merged["전년 금액"] / previous_total if previous_total else 0.0
     )
-    fig.update_layout(
-        title=title,
-        height=max(380, 135 + len(chart_data) * 44),
-        margin=dict(l=15, r=15, t=60, b=20),
-        barmode="group",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis_title=f"수량({unit})" if measure == "quantity" else f"금액({unit})",
-        yaxis_title=None,
-        xaxis_tickformat=",.0f",
+    merged["구성비 변화"] = merged["금년 구성비"] - merged["전년 구성비"]
+    merged["금년 평균단가"] = (merged["금년 금액"] / merged["금년 수량"]).where(
+        merged["금년 수량"].ne(0)
     )
-    return fig
+    merged["전년 평균단가"] = (merged["전년 금액"] / merged["전년 수량"]).where(
+        merged["전년 수량"].ne(0)
+    )
+    merged["평균단가 변화율"] = (
+        merged["금년 평균단가"] / merged["전년 평균단가"] - 1
+    ).where(merged["전년 평균단가"].ne(0))
+    return merged.sort_values("금년 금액", ascending=False).reset_index(drop=True)
 
 
 def build_product_catalog(frame: pd.DataFrame) -> pd.DataFrame:
@@ -1156,8 +1131,6 @@ with detail_tab:
         list(range(month_range[0], month_range[1] + 1)),
         index=max(0, min(month_range[1], detail_default) - month_range[0]),
     )
-    detail = item_comparison(sales_view, base_year, detail_month, amount_col)
-
     month_current = sales_view[
         sales_view["연도"].eq(base_year) & sales_view["월"].eq(detail_month)
     ]
@@ -1172,6 +1145,12 @@ with detail_tab:
     amount_growth = growth(current_amount, previous_amount)
     current_asp = current_amount / current_qty if current_qty else 0
     previous_asp = previous_amount / previous_qty if previous_qty else 0
+    current_item_count = int(
+        month_current.groupby(["표준SKU", "품목명"], observed=True)["수량"]
+        .sum()
+        .ne(0)
+        .sum()
+    )
 
     detail_metrics = st.columns(4)
     detail_metrics[0].metric("월 판매수량", f"{format_number(current_qty)}개", delta_text(qty_growth))
@@ -1181,7 +1160,7 @@ with detail_tab:
         f"{format_number(current_asp)}원",
         delta_text(growth(current_asp, previous_asp)),
     )
-    detail_metrics[3].metric("판매 품목 수", f"{len(detail[detail['금년 수량'].ne(0)]):,}개")
+    detail_metrics[3].metric("판매 품목 수", f"{current_item_count:,}개")
 
     if qty_growth is not None and amount_growth is not None:
         if qty_growth > amount_growth and current_asp < previous_asp:
@@ -1195,72 +1174,237 @@ with detail_tab:
                 f"매출액은 {amount_growth:+.1%}입니다."
             )
 
-    st.markdown("#### 비교할 품목 선택")
-    st.caption("왼쪽 체크박스를 켠 품목만 아래 수량·금액 그래프에서 비교합니다.")
+    category_detail = category_month_comparison(
+        sales_view, base_year, detail_month, amount_col
+    )
 
-    if detail.empty:
-        st.info("선택한 월에는 비교할 판매 내역이 없습니다.")
+    st.markdown(f"#### {base_year}년 {detail_month}월 상품 유형별 매출 구성")
+    st.caption(
+        "선택한 월의 매출액이 어떤 상품 유형에서 발생했는지 보여주고, "
+        "전년 같은 달과 구성 변화를 비교합니다."
+    )
+
+    if category_detail.empty or current_amount == 0:
+        st.info("선택한 월에는 상품 유형별 매출 구성을 계산할 데이터가 없습니다.")
     else:
-        display = detail[
-            [
-                "표준SKU",
-                "품목명",
-                "금년 수량",
-                "전년 수량",
-                "수량 변화량",
-                "수량 변화율",
-                "금년 금액",
-                "전년 금액",
-                "금액 변화량",
-                "금액 변화율",
-            ]
-        ].copy()
-        display.insert(0, "선택", False)
-        display.loc[display.index[: min(5, len(display))], "선택"] = True
-        display["수량 변화율"] = display["수량 변화율"] * 100
-        display["금액 변화율"] = display["금액 변화율"] * 100
+        composition = category_detail[category_detail["금년 금액"].gt(0)].copy()
+        palette = [
+            "#2563EB", "#06B6D4", "#14B8A6", "#10B981", "#84CC16",
+            "#F59E0B", "#F97316", "#EF4444", "#EC4899", "#8B5CF6",
+            "#6366F1", "#64748B", "#0EA5E9", "#A855F7",
+        ]
 
-        selected_display = st.data_editor(
-            display,
-            width="stretch",
-            hide_index=True,
-            height=min(560, 84 + len(display) * 35),
-            key=f"detail_item_selector_{base_year}_{detail_month}",
-            disabled=[column for column in display.columns if column != "선택"],
-            column_config={
-                "선택": st.column_config.CheckboxColumn("선택", width="small"),
-                "표준SKU": st.column_config.TextColumn("품목코드", width="medium"),
-                "품목명": st.column_config.TextColumn("품목명", width="large"),
-                "금년 수량": st.column_config.NumberColumn(format="%,.0f"),
-                "전년 수량": st.column_config.NumberColumn(format="%,.0f"),
-                "수량 변화량": st.column_config.NumberColumn(format="%,.0f"),
-                "수량 변화율": st.column_config.NumberColumn(format="%.1f%%"),
-                "금년 금액": st.column_config.NumberColumn(format="%,.0f원"),
-                "전년 금액": st.column_config.NumberColumn(format="%,.0f원"),
-                "금액 변화량": st.column_config.NumberColumn(format="%,.0f원"),
-                "금액 변화율": st.column_config.NumberColumn(format="%.1f%%"),
-            },
+        composition_column, comparison_column = st.columns([1, 1.2])
+        with composition_column:
+            pie_fig = go.Figure(
+                go.Pie(
+                    labels=composition["유형"],
+                    values=composition["금년 금액"],
+                    hole=0.43,
+                    sort=False,
+                    marker=dict(colors=palette[: len(composition)]),
+                    textinfo="label+percent",
+                    textposition="auto",
+                    customdata=composition[["금년 수량", "금년 평균단가"]],
+                    hovertemplate=(
+                        "%{label}<br>매출액 %{value:,.0f}원"
+                        "<br>구성비 %{percent}<br>판매수량 %{customdata[0]:,.0f}개"
+                        "<br>평균단가 %{customdata[1]:,.0f}원<extra></extra>"
+                    ),
+                )
+            )
+            pie_fig.update_layout(
+                title="금년 월 매출 구성",
+                height=500,
+                margin=dict(l=10, r=10, t=60, b=25),
+                legend=dict(orientation="h", yanchor="top", y=-0.05),
+                annotations=[
+                    dict(
+                        text=f"월 매출<br><b>{format_money(current_amount)}</b>",
+                        x=0.5,
+                        y=0.5,
+                        showarrow=False,
+                        font=dict(size=16, color="#0F172A"),
+                    )
+                ],
+            )
+            st.plotly_chart(
+                pie_fig,
+                width="stretch",
+                key=f"category_composition_{base_year}_{detail_month}",
+            )
+
+        with comparison_column:
+            comparison_data = category_detail.copy()
+            comparison_data["비교 크기"] = comparison_data[
+                ["금년 금액", "전년 금액"]
+            ].max(axis=1)
+            comparison_data = comparison_data.sort_values("비교 크기")
+            comparison_fig = go.Figure()
+            comparison_fig.add_trace(
+                go.Bar(
+                    x=comparison_data["전년 금액"],
+                    y=comparison_data["유형"],
+                    name=str(base_year - 1),
+                    orientation="h",
+                    marker_color="#BAE6FD",
+                    hovertemplate="%{y}<br>전년 %{x:,.0f}원<extra></extra>",
+                )
+            )
+            comparison_fig.add_trace(
+                go.Bar(
+                    x=comparison_data["금년 금액"],
+                    y=comparison_data["유형"],
+                    name=str(base_year),
+                    orientation="h",
+                    marker_color="#2563EB",
+                    hovertemplate="%{y}<br>금년 %{x:,.0f}원<extra></extra>",
+                )
+            )
+            comparison_fig.update_layout(
+                title="상품 유형별 매출액 전년 비교",
+                height=500,
+                margin=dict(l=10, r=10, t=60, b=25),
+                barmode="group",
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+                ),
+                xaxis_title="매출액(원)",
+                yaxis_title=None,
+                xaxis_tickformat=",.0s",
+            )
+            st.plotly_chart(
+                comparison_fig,
+                width="stretch",
+                key=f"category_amount_yoy_{base_year}_{detail_month}",
+            )
+
+        top_category = category_detail.iloc[0]
+        top_three_share = float(category_detail.head(3)["금년 구성비"].sum())
+        increase_rows = category_detail[category_detail["금액 변화량"].gt(0)]
+        decrease_rows = category_detail[category_detail["금액 변화량"].lt(0)]
+        biggest_increase = (
+            increase_rows.loc[increase_rows["금액 변화량"].idxmax()]
+            if not increase_rows.empty
+            else None
+        )
+        biggest_decrease = (
+            decrease_rows.loc[decrease_rows["금액 변화량"].idxmin()]
+            if not decrease_rows.empty
+            else None
         )
 
-        selected_skus = selected_display.loc[selected_display["선택"], "표준SKU"].tolist()
-        selected_detail = detail[detail["표준SKU"].isin(selected_skus)].copy()
-        if selected_detail.empty:
-            st.info("비교할 품목을 하나 이상 체크해 주세요.")
-        else:
-            st.caption(f"현재 {len(selected_detail):,}개 품목을 비교하고 있습니다.")
-            quantity_column, amount_column = st.columns(2)
-            with quantity_column:
-                st.plotly_chart(
-                    item_yoy_chart(selected_detail, base_year, "quantity"),
-                    width="stretch",
-                    key=f"detail_quantity_yoy_{base_year}_{detail_month}",
-                )
-            with amount_column:
-                st.plotly_chart(
-                    item_yoy_chart(selected_detail, base_year, "amount"),
-                    width="stretch",
-                    key=f"detail_amount_yoy_{base_year}_{detail_month}",
-                )
+        st.markdown("#### 핵심 구성 변화")
+        insight_columns = st.columns(4)
+        insight_columns[0].metric(
+            "매출 1위 유형",
+            str(top_category["유형"]),
+            f"구성비 {top_category['금년 구성비']:.1%}",
+            delta_color="off",
+        )
+        insight_columns[1].metric(
+            "상위 3개 유형 집중도",
+            f"{top_three_share:.1%}",
+            "전체 월 매출 기준",
+            delta_color="off",
+        )
+        insight_columns[2].metric(
+            "매출 증가 기여 1위",
+            str(biggest_increase["유형"]) if biggest_increase is not None else "없음",
+            (
+                format_money(float(biggest_increase["금액 변화량"]))
+                if biggest_increase is not None
+                else "증가 유형 없음"
+            ),
+        )
+        insight_columns[3].metric(
+            "매출 감소 영향 1위",
+            str(biggest_decrease["유형"]) if biggest_decrease is not None else "없음",
+            (
+                format_money(float(biggest_decrease["금액 변화량"]))
+                if biggest_decrease is not None
+                else "감소 유형 없음"
+            ),
+        )
+
+        share_change_row = category_detail.loc[
+            category_detail["구성비 변화"].abs().idxmax()
+        ]
+        st.info(
+            f"{top_category['유형']} 유형이 월 매출의 {top_category['금년 구성비']:.1%}로 "
+            f"가장 큰 비중을 차지합니다. 구성비 변화가 가장 큰 유형은 "
+            f"{share_change_row['유형']}이며 전년 동월 대비 "
+            f"{share_change_row['구성비 변화']:+.1%}p 변했습니다."
+        )
+
+        st.markdown("#### 유형별 매출 증감 기여")
+        contribution = category_detail.sort_values("금액 변화량")
+        contribution["변화율 표시"] = contribution["금액 변화율"].map(
+            lambda value: "비교 기준 없음" if pd.isna(value) else f"{value:+.1%}"
+        )
+        contribution_fig = go.Figure(
+            go.Bar(
+                x=contribution["금액 변화량"],
+                y=contribution["유형"],
+                orientation="h",
+                marker_color=[
+                    "#10B981" if value >= 0 else "#EF4444"
+                    for value in contribution["금액 변화량"]
+                ],
+                customdata=contribution["변화율 표시"],
+                hovertemplate=(
+                    "%{y}<br>매출 증감 %{x:+,.0f}원"
+                    "<br>변화율 %{customdata}<extra></extra>"
+                ),
+            )
+        )
+        contribution_fig.add_vline(x=0, line_color="#94A3B8", line_width=1)
+        contribution_fig.update_layout(
+            height=max(390, 135 + len(contribution) * 30),
+            margin=dict(l=10, r=10, t=20, b=25),
+            xaxis_title="전년 동월 대비 매출 증감액(원)",
+            yaxis_title=None,
+            xaxis_tickformat="+,.0s",
+        )
+        st.plotly_chart(
+            contribution_fig,
+            width="stretch",
+            key=f"category_contribution_{base_year}_{detail_month}",
+        )
+
+        st.markdown("#### 상품 유형별 상세 비교표")
+        category_display = category_detail[
+            [
+                "유형", "금년 금액", "금년 구성비", "전년 금액", "전년 구성비",
+                "금액 변화량", "금액 변화율", "구성비 변화", "금년 수량",
+                "전년 수량", "금년 평균단가", "전년 평균단가", "평균단가 변화율",
+            ]
+        ].copy()
+        for percent_column in [
+            "금년 구성비", "전년 구성비", "금액 변화율", "구성비 변화", "평균단가 변화율"
+        ]:
+            category_display[percent_column] = category_display[percent_column] * 100
+        st.dataframe(
+            category_display,
+            width="stretch",
+            hide_index=True,
+            height=min(560, 84 + len(category_display) * 35),
+            column_config={
+                "유형": st.column_config.TextColumn("상품 유형", width="medium"),
+                "금년 금액": st.column_config.NumberColumn("금년 매출", format="%,.0f원"),
+                "금년 구성비": st.column_config.NumberColumn("금년 구성비", format="%.1f%%"),
+                "전년 금액": st.column_config.NumberColumn("전년 매출", format="%,.0f원"),
+                "전년 구성비": st.column_config.NumberColumn("전년 구성비", format="%.1f%%"),
+                "금액 변화량": st.column_config.NumberColumn("매출 증감", format="%,.0f원"),
+                "금액 변화율": st.column_config.NumberColumn("매출 변화율", format="%.1f%%"),
+                "구성비 변화": st.column_config.NumberColumn("구성비 증감", format="%.1f%%p"),
+                "금년 수량": st.column_config.NumberColumn(format="%,.0f개"),
+                "전년 수량": st.column_config.NumberColumn(format="%,.0f개"),
+                "금년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
+                "전년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
+                "평균단가 변화율": st.column_config.NumberColumn(format="%.1f%%"),
+            },
+        )
 
 with forecast_tab:
     render_forecast_tab(sales)
