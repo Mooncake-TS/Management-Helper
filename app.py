@@ -49,29 +49,43 @@ def default_file(filename: str, env_name: str) -> Path | None:
     candidates = [
         Path(os.environ[env_name]) if os.environ.get(env_name) else None,
         Path.cwd() / "data" / filename,
+        Path.home() / "OneDrive" / "바탕 화면" / "개인 rev 1 완성" / "테마" / filename,
         Path.home() / "OneDrive" / "바탕 화면" / "개인 프로젝트" / filename,
         Path.home() / "Desktop" / "개인 프로젝트" / filename,
     ]
     return next((path for path in candidates if path and path.exists()), None)
 
 
-DEFAULT_SALES = default_file("매출 Summary_Rev.1.xlsm", "SALES_SUMMARY_PATH")
-DEFAULT_PURCHASE = default_file("매입 Summary_Rev.1.xlsm", "PURCHASE_SUMMARY_PATH")
+DEFAULT_PREVIOUS_SALES = default_file("25년도 매출.xlsx", "PREVIOUS_SALES_PATH")
+DEFAULT_CURRENT_SALES = default_file("26년도 매출.xlsx", "CURRENT_SALES_PATH")
+DEFAULT_PURCHASE = default_file("25, 26년도 매입.xlsx", "PURCHASE_PATH")
 
 
 @st.cache_data(show_spinner="엑셀 Rawdata를 읽고 있습니다...")
 def load_from_inputs(
-    sales_bytes: bytes | None,
+    previous_sales_bytes: bytes | None,
+    current_sales_bytes: bytes | None,
     purchase_bytes: bytes | None,
-    sales_path: str,
+    previous_sales_path: str,
+    current_sales_path: str,
     purchase_path: str,
-    sales_mtime: float,
+    previous_sales_mtime: float,
+    current_sales_mtime: float,
     purchase_mtime: float,
 ):
-    del sales_mtime, purchase_mtime
-    sales_source = sales_bytes if sales_bytes is not None else sales_path
+    del previous_sales_mtime, current_sales_mtime, purchase_mtime
+    previous_sales_source = (
+        previous_sales_bytes if previous_sales_bytes is not None else previous_sales_path
+    )
+    current_sales_source = (
+        current_sales_bytes if current_sales_bytes is not None else current_sales_path
+    )
     purchase_source = purchase_bytes if purchase_bytes is not None else purchase_path
-    return load_dashboard_data(sales_source, purchase_source)
+    return load_dashboard_data(
+        previous_sales_source,
+        current_sales_source,
+        purchase_source,
+    )
 
 
 def format_number(value: float) -> str:
@@ -885,41 +899,61 @@ def render_forecast_tab(sales: pd.DataFrame) -> None:
 
 
 st.title("테마상품 매입·매출 대시보드")
-st.caption("Rawdata는 수정하지 않고 읽기 전용으로 분석합니다.")
+st.caption("ERP에서 내려받은 엑셀 3개를 수정하지 않고 읽기 전용으로 분석합니다.")
 
 with st.sidebar:
     st.header("데이터 연결")
-    st.caption("매출·매입 파일을 모두 올리면 자동으로 분석을 시작합니다.")
-    sales_upload = st.file_uploader(
-        "매출 Summary",
-        type=["xlsm", "xlsx"],
-        help="Rawdata 시트가 있는 매출 Summary 파일을 올려주세요.",
+    st.caption("전년도 매출·올해 매출·매입 파일을 모두 올리면 자동으로 분석합니다.")
+    previous_sales_upload = st.file_uploader(
+        "1. 전년도 매출",
+        type=["xlsx", "xlsm"],
+        help="ERP에서 내려받은 전년도 매출 엑셀 파일을 올려주세요.",
+        key="previous_sales_upload",
+    )
+    current_sales_upload = st.file_uploader(
+        "2. 올해 매출",
+        type=["xlsx", "xlsm"],
+        help="ERP에서 내려받은 올해 매출 엑셀 파일을 올려주세요.",
+        key="current_sales_upload",
     )
     purchase_upload = st.file_uploader(
-        "매입 Summary",
-        type=["xlsm", "xlsx"],
-        help="Purchase_Rawdata 시트가 있는 매입 Summary 파일을 올려주세요.",
+        "3. 매입",
+        type=["xlsx", "xlsm"],
+        help="전년도와 올해 내역이 들어 있는 매입 엑셀 파일을 올려주세요.",
+        key="purchase_upload",
     )
 
-sales_bytes = sales_upload.getvalue() if sales_upload else None
+previous_sales_bytes = previous_sales_upload.getvalue() if previous_sales_upload else None
+current_sales_bytes = current_sales_upload.getvalue() if current_sales_upload else None
 purchase_bytes = purchase_upload.getvalue() if purchase_upload else None
-sales_path = str(DEFAULT_SALES or "")
+previous_sales_path = str(DEFAULT_PREVIOUS_SALES or "")
+current_sales_path = str(DEFAULT_CURRENT_SALES or "")
 purchase_path = str(DEFAULT_PURCHASE or "")
 
-if sales_bytes is None and not sales_path:
-    st.info("왼쪽에서 매출 Summary 파일을 올려주세요.")
+if previous_sales_bytes is None and not previous_sales_path:
+    st.info("왼쪽에서 전년도 매출 파일을 올려주세요.")
+    st.stop()
+if current_sales_bytes is None and not current_sales_path:
+    st.info("왼쪽에서 올해 매출 파일을 올려주세요.")
     st.stop()
 if purchase_bytes is None and not purchase_path:
-    st.info("왼쪽에서 매입 Summary 파일을 올려주세요.")
+    st.info("왼쪽에서 매입 파일을 올려주세요.")
     st.stop()
 
 try:
     sales, purchase, quality = load_from_inputs(
-        sales_bytes,
+        previous_sales_bytes,
+        current_sales_bytes,
         purchase_bytes,
-        sales_path,
+        previous_sales_path,
+        current_sales_path,
         purchase_path,
-        0 if sales_bytes is not None else Path(sales_path).stat().st_mtime,
+        0
+        if previous_sales_bytes is not None
+        else Path(previous_sales_path).stat().st_mtime,
+        0
+        if current_sales_bytes is not None
+        else Path(current_sales_path).stat().st_mtime,
         0 if purchase_bytes is not None else Path(purchase_path).stat().st_mtime,
     )
 except Exception as exc:
@@ -934,10 +968,14 @@ if not valid_years:
     st.stop()
 
 with st.sidebar:
-    if sales_upload:
-        st.success(f"매출: {sales_upload.name}")
+    if previous_sales_upload:
+        st.success(f"전년도 매출: {previous_sales_upload.name}")
     else:
-        st.success(f"매출: {Path(sales_path).name}")
+        st.success(f"전년도 매출: {Path(previous_sales_path).name}")
+    if current_sales_upload:
+        st.success(f"올해 매출: {current_sales_upload.name}")
+    else:
+        st.success(f"올해 매출: {Path(current_sales_path).name}")
     if purchase_upload:
         st.success(f"매입: {purchase_upload.name}")
     else:
@@ -1575,8 +1613,10 @@ with quality_tab:
         and purchase_quality["invalid_dates"] == 0
         and sales_quality["category_blank_rows"] == 0
         and purchase_quality["category_blank_rows"] == 0
+        and sales_quality["tag_unmatched_rows"] == 0
+        and purchase_quality["tag_unmatched_rows"] == 0
     ):
-        st.success("날짜와 상품 유형은 모두 정상이며 합계행도 Rawdata에 포함되지 않았습니다.")
+        st.success("날짜와 상품 태그가 모두 정상이며 합계행은 분석에서 제외했습니다.")
 
     quality_metrics = st.columns(5)
     quality_metrics[0].metric("매출 상세행", f"{sales_quality['rows']:,}건")
@@ -1598,6 +1638,7 @@ with quality_tab:
         f"""
         - 매출의 `판매처명` 공란 {sales_quality['original_customer_blank_rows']:,}건은 `창고명`을 이용해 화면용 거래처로 보완했습니다.
         - 매출 SKU는 `모델번호 + COLOR + SIZE` 조합과 숫자 사이즈 3자리 보정으로 {sales_quality['sku_matched_rows']:,}건을 매입 품목코드에 연결했습니다.
+        - 태그 마스터와 연결되지 않은 행은 매출 {sales_quality['tag_unmatched_rows']:,}건, 매입 {purchase_quality['tag_unmatched_rows']:,}건이며 임시로 `기타용품`에 포함했습니다.
         - 금액 공란 행은 삭제하지 않고 수량은 포함하며, 금액 합산에서는 0으로 취급합니다.
         - 완전히 동일해 보이는 행도 실제 반복 판매일 수 있으므로 자동 삭제하지 않습니다.
         """
@@ -1612,6 +1653,25 @@ with quality_tab:
     )
     with st.expander("매입 품목코드와 연결되지 않은 매출 품목 보기"):
         st.dataframe(unmatched, width="stretch", hide_index=True)
+
+    unmatched_tags = pd.concat(
+        [
+            sales.loc[~sales["태그연결상태"], ["거래구분", "품목명", "수량"]],
+            purchase.loc[~purchase["태그연결상태"], ["거래구분", "품목명", "수량"]],
+        ],
+        ignore_index=True,
+    )
+    unmatched_tags = (
+        unmatched_tags.groupby(["거래구분", "품목명"], observed=True)["수량"]
+        .sum()
+        .reset_index()
+        .sort_values(["거래구분", "수량"], ascending=[True, False])
+    )
+    with st.expander("태그 마스터에 없는 신규 품목 보기"):
+        if unmatched_tags.empty:
+            st.success("태그가 연결되지 않은 신규 품목이 없습니다.")
+        else:
+            st.dataframe(unmatched_tags, width="stretch", hide_index=True)
 
 st.caption(
     "음수 수량은 반품으로 포함됩니다. 금액 기준은 왼쪽에서 합계 또는 공급가액으로 바꿀 수 있습니다."
