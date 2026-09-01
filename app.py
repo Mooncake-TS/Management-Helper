@@ -346,10 +346,6 @@ def category_month_comparison(
     merged["평균단가 변화율"] = (
         merged["금년 평균단가"] / merged["전년 평균단가"] - 1
     ).where(merged["전년 평균단가"].ne(0))
-    merged["수량 효과"] = (
-        merged["수량 변화량"] * merged["전년 평균단가"].fillna(0)
-    )
-    merged["평균단가·상품구성 효과"] = merged["금액 변화량"] - merged["수량 효과"]
     return merged.sort_values("금년 금액", ascending=False).reset_index(drop=True)
 
 
@@ -397,39 +393,47 @@ def render_month_driver_summary(
             f"{qty_growth:+.1%}와 평균단가·상품구성 변화 {asp_growth:+.1%}를 함께 확인해야 합니다."
         )
 
-    quantity_driver = category_detail.loc[category_detail["수량 변화량"].idxmax()]
-    revenue_driver = category_detail.loc[category_detail["금액 변화량"].idxmax()]
-    price_mix_drag = category_detail.loc[
-        category_detail["평균단가·상품구성 효과"].idxmin()
-    ]
-    revenue_drag = category_detail.loc[category_detail["금액 변화량"].idxmin()]
+    total_quantity_change = float(category_detail["수량 변화량"].sum())
+    total_revenue_change = float(category_detail["금액 변화량"].sum())
+
+    if total_quantity_change > 0:
+        quantity_driver = category_detail.loc[category_detail["수량 변화량"].idxmax()]
+        quantity_direction = "증가"
+    elif total_quantity_change < 0:
+        quantity_driver = category_detail.loc[category_detail["수량 변화량"].idxmin()]
+        quantity_direction = "감소"
+    else:
+        quantity_driver = category_detail.loc[
+            category_detail["수량 변화량"].abs().idxmax()
+        ]
+        quantity_direction = "변동"
+
+    if total_revenue_change > 0:
+        revenue_driver = category_detail.loc[category_detail["금액 변화량"].idxmax()]
+        revenue_direction = "증가"
+    elif total_revenue_change < 0:
+        revenue_driver = category_detail.loc[category_detail["금액 변화량"].idxmin()]
+        revenue_direction = "감소"
+    else:
+        revenue_driver = category_detail.loc[
+            category_detail["금액 변화량"].abs().idxmax()
+        ]
+        revenue_direction = "변동"
 
     st.markdown("#### 월 변화 요인 자동 분석")
     with st.container(border=True):
         st.markdown(f"**한 줄 요약:** {headline}")
-        driver_columns = st.columns(4)
+        driver_columns = st.columns(2)
         driver_columns[0].metric(
-            "수량 증가 기여 1위",
+            f"수량 {quantity_direction} 기여 1위",
             str(quantity_driver["유형"]),
             f"{quantity_driver['수량 변화량']:+,.0f}개",
             delta_color="off",
         )
         driver_columns[1].metric(
-            "매출 증가 기여 1위",
+            f"매출 {revenue_direction} 기여 1위",
             str(revenue_driver["유형"]),
             format_signed_money(float(revenue_driver["금액 변화량"])),
-            delta_color="off",
-        )
-        driver_columns[2].metric(
-            "단가·구성 하락 영향 1위",
-            str(price_mix_drag["유형"]),
-            format_signed_money(float(price_mix_drag["평균단가·상품구성 효과"])),
-            delta_color="off",
-        )
-        driver_columns[3].metric(
-            "매출 감소 영향 1위",
-            str(revenue_drag["유형"]),
-            format_signed_money(float(revenue_drag["금액 변화량"])),
             delta_color="off",
         )
 
@@ -439,28 +443,18 @@ def render_month_driver_summary(
             if pd.isna(quantity_asp_rate)
             else f"{quantity_asp_rate:+.1%}"
         )
-        revenue_main_effect = (
-            "수량 증가"
-            if abs(float(revenue_driver["수량 효과"]))
-            >= abs(float(revenue_driver["평균단가·상품구성 효과"]))
-            else "평균단가·상품구성 변화"
-        )
         st.markdown(
-            f"- **수량 확대 요인:** {quantity_driver['유형']} 유형이 "
-            f"{quantity_driver['수량 변화량']:+,.0f}개로 가장 많이 변했습니다. "
-            f"해당 유형 매출은 {format_signed_money(float(quantity_driver['금액 변화량']))}, "
+            f"- **수량 {quantity_direction} 요인:** 전체 판매수량은 전년 동월보다 "
+            f"{total_quantity_change:+,.0f}개 변했습니다. 이 가운데 "
+            f"**{quantity_driver['유형']}**이 {quantity_driver['수량 변화량']:+,.0f}개로 "
+            f"가장 크게 기여했습니다. 해당 유형의 실제 매출은 "
+            f"{format_signed_money(float(quantity_driver['금액 변화량']))}, "
             f"평균단가는 {quantity_asp_text} 변했습니다.\n"
-            f"- **매출 증가 요인:** {revenue_driver['유형']}의 매출 증감은 "
-            f"{format_signed_money(float(revenue_driver['금액 변화량']))}이며, "
-            f"수량 효과는 {format_signed_money(float(revenue_driver['수량 효과']))}, "
-            f"평균단가·상품구성 효과는 "
-            f"{format_signed_money(float(revenue_driver['평균단가·상품구성 효과']))}입니다. "
-            f"주된 요인은 **{revenue_main_effect}**입니다.\n"
-            f"- **상쇄 요인:** 평균단가·상품구성 하락 영향이 가장 큰 유형은 "
-            f"{price_mix_drag['유형']}이며, 매출에 "
-            f"{format_signed_money(float(price_mix_drag['평균단가·상품구성 효과']))}의 영향을 줬습니다. "
-            f"전체 매출 감소 영향이 가장 큰 유형은 {revenue_drag['유형']} "
-            f"({format_signed_money(float(revenue_drag['금액 변화량']))})입니다."
+            f"- **매출 {revenue_direction} 요인:** 전체 매출은 전년 동월보다 "
+            f"{format_signed_money(total_revenue_change)} 변했습니다. "
+            f"이 변화에 가장 크게 기여한 유형은 **{revenue_driver['유형']}**이며, "
+            f"해당 유형의 실제 매출 증감은 "
+            f"{format_signed_money(float(revenue_driver['금액 변화량']))}입니다."
         )
 
         driver_category = str(quantity_driver["유형"])
@@ -514,12 +508,6 @@ def render_month_driver_summary(
                     "금액 변화량": st.column_config.NumberColumn("매출 증감", format="%,.0f원"),
                 },
             )
-
-        st.caption(
-            "평균단가·상품구성 효과는 실제 판매단가 변화뿐 아니라 할인, 저가·고가 품목의 "
-            "판매 비중 변화가 함께 반영된 값입니다. 현재 ERP 자료만으로 세 요인을 완전히 분리하지는 않습니다."
-        )
-
 
 def build_product_catalog(frame: pd.DataFrame) -> pd.DataFrame:
     catalog = (
@@ -1562,8 +1550,7 @@ with detail_tab:
             [
                 "유형", "금년 금액", "금년 구성비", "전년 금액", "전년 구성비",
                 "금액 변화량", "금액 변화율", "구성비 변화", "금년 수량",
-                "전년 수량", "수량 효과", "평균단가·상품구성 효과",
-                "금년 평균단가", "전년 평균단가", "평균단가 변화율",
+                "전년 수량", "금년 평균단가", "전년 평균단가", "평균단가 변화율",
             ]
         ].copy()
         for percent_column in [
@@ -1586,8 +1573,6 @@ with detail_tab:
                 "구성비 변화": st.column_config.NumberColumn("구성비 증감", format="%.1f%%p"),
                 "금년 수량": st.column_config.NumberColumn(format="%,.0f개"),
                 "전년 수량": st.column_config.NumberColumn(format="%,.0f개"),
-                "수량 효과": st.column_config.NumberColumn(format="%,.0f원"),
-                "평균단가·상품구성 효과": st.column_config.NumberColumn(format="%,.0f원"),
                 "금년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
                 "전년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
                 "평균단가 변화율": st.column_config.NumberColumn(format="%.1f%%"),
@@ -2008,3 +1993,4 @@ with quality_tab:
 st.caption(
     "음수 수량은 반품으로 포함됩니다. 금액 기준은 왼쪽에서 합계 또는 공급가액으로 바꿀 수 있습니다."
 )
+
