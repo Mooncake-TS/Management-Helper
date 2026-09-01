@@ -360,6 +360,10 @@ def format_signed_money(value: float) -> str:
 
 def render_month_driver_summary(
     category_detail: pd.DataFrame,
+    sales_frame: pd.DataFrame,
+    year: int,
+    month: int,
+    amount_col: str,
     qty_growth: float | None,
     amount_growth: float | None,
     current_asp: float,
@@ -458,6 +462,59 @@ def render_month_driver_summary(
             f"전체 매출 감소 영향이 가장 큰 유형은 {revenue_drag['유형']} "
             f"({format_signed_money(float(revenue_drag['금액 변화량']))})입니다."
         )
+
+        driver_category = str(quantity_driver["유형"])
+        driver_items = item_comparison(
+            sales_frame[sales_frame["유형"].eq(driver_category)],
+            year,
+            month,
+            amount_col,
+        )
+        driver_items["평균단가 변화율"] = (
+            driver_items["금년 평균단가"] / driver_items["전년 평균단가"] - 1
+        ).where(driver_items["전년 평균단가"].ne(0))
+        increased_items = driver_items[driver_items["수량 변화량"].gt(0)].nlargest(
+            8, "수량 변화량"
+        )
+
+        if not increased_items.empty:
+            st.markdown(f"##### 수량 증가 주요 품목 · {driver_category}")
+            st.caption(
+                "수량 증가 기여가 가장 큰 상품 유형에서 증가량 상위 8개 품목을 보여줍니다. "
+                "평균단가는 선택 월의 매출액을 판매수량으로 나눈 값입니다."
+            )
+            item_display = increased_items[
+                [
+                    "품목명",
+                    "전년 수량",
+                    "금년 수량",
+                    "수량 변화량",
+                    "전년 평균단가",
+                    "금년 평균단가",
+                    "평균단가 변화율",
+                    "금액 변화량",
+                ]
+            ].copy()
+            item_display["평균단가 변화율"] = item_display["평균단가 변화율"] * 100
+            st.dataframe(
+                item_display,
+                width="stretch",
+                hide_index=True,
+                height=min(380, 84 + len(item_display) * 35),
+                column_config={
+                    "품목명": st.column_config.TextColumn(width="large"),
+                    "전년 수량": st.column_config.NumberColumn(format="%,.0f개"),
+                    "금년 수량": st.column_config.NumberColumn(format="%,.0f개"),
+                    "수량 변화량": st.column_config.NumberColumn("수량 증감", format="%,.0f개"),
+                    "전년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
+                    "금년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
+                    "평균단가 변화율": st.column_config.NumberColumn(
+                        "단가 변화율", format="%.1f%%"
+                    ),
+                    "금액 변화량": st.column_config.NumberColumn("매출 증감", format="%,.0f원"),
+                },
+            )
+
         st.caption(
             "평균단가·상품구성 효과는 실제 판매단가 변화뿐 아니라 할인, 저가·고가 품목의 "
             "판매 비중 변화가 함께 반영된 값입니다. 현재 ERP 자료만으로 세 요인을 완전히 분리하지는 않습니다."
@@ -1294,6 +1351,10 @@ with detail_tab:
     )
     render_month_driver_summary(
         category_detail,
+        sales_view,
+        base_year,
+        detail_month,
+        amount_col,
         qty_growth,
         amount_growth,
         current_asp,
