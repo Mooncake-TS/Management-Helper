@@ -360,38 +360,9 @@ def render_month_driver_summary(
     year: int,
     month: int,
     amount_col: str,
-    qty_growth: float | None,
-    amount_growth: float | None,
-    current_asp: float,
-    previous_asp: float,
 ) -> None:
     if category_detail.empty:
         return
-
-    asp_growth = growth(current_asp, previous_asp)
-    if qty_growth is None or amount_growth is None or asp_growth is None:
-        headline = "전년 비교 기준이 부족해 확인 가능한 상품 유형의 증감액을 중심으로 분석했습니다."
-    elif qty_growth > 0 and asp_growth < 0 and amount_growth < qty_growth:
-        headline = (
-            f"판매수량은 전년 대비 {qty_growth:+.1%} 늘었지만 매출액은 {amount_growth:+.1%}에 "
-            f"그쳤습니다. 전체 평균단가·상품구성이 {asp_growth:+.1%} 낮아져 "
-            "수량 증가 효과를 상당 부분 상쇄했습니다."
-        )
-    elif qty_growth < 0 and asp_growth > 0 and amount_growth > qty_growth:
-        headline = (
-            f"판매수량은 {qty_growth:+.1%} 감소했지만 평균단가·상품구성이 {asp_growth:+.1%} "
-            f"높아져 매출액 변화는 {amount_growth:+.1%}로 방어했습니다."
-        )
-    elif amount_growth >= 0:
-        headline = (
-            f"매출액은 전년 대비 {amount_growth:+.1%} 변했습니다. 판매수량 변화 "
-            f"{qty_growth:+.1%}와 평균단가·상품구성 변화 {asp_growth:+.1%}가 함께 반영된 결과입니다."
-        )
-    else:
-        headline = (
-            f"매출액은 전년 대비 {amount_growth:+.1%} 변했습니다. 판매수량 변화 "
-            f"{qty_growth:+.1%}와 평균단가·상품구성 변화 {asp_growth:+.1%}를 함께 확인해야 합니다."
-        )
 
     total_quantity_change = float(category_detail["수량 변화량"].sum())
     total_revenue_change = float(category_detail["금액 변화량"].sum())
@@ -419,6 +390,11 @@ def render_month_driver_summary(
             category_detail["금액 변화량"].abs().idxmax()
         ]
         revenue_direction = "변동"
+
+    headline = (
+        f"판매수량 {quantity_direction}은 {quantity_driver['유형']}, "
+        f"매출 {revenue_direction}은 {revenue_driver['유형']}의 영향이 가장 컸습니다."
+    )
 
     st.markdown("#### 월 변화 요인 자동 분석")
     with st.container(border=True):
@@ -1343,10 +1319,6 @@ with detail_tab:
         base_year,
         detail_month,
         amount_col,
-        qty_growth,
-        amount_growth,
-        current_asp,
-        previous_asp,
     )
 
     st.markdown(f"#### {base_year}년 {detail_month}월 상품 유형별 매출 구성")
