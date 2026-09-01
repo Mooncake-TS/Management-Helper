@@ -346,7 +346,122 @@ def category_month_comparison(
     merged["평균단가 변화율"] = (
         merged["금년 평균단가"] / merged["전년 평균단가"] - 1
     ).where(merged["전년 평균단가"].ne(0))
+    merged["수량 효과"] = (
+        merged["수량 변화량"] * merged["전년 평균단가"].fillna(0)
+    )
+    merged["평균단가·상품구성 효과"] = merged["금액 변화량"] - merged["수량 효과"]
     return merged.sort_values("금년 금액", ascending=False).reset_index(drop=True)
+
+
+def format_signed_money(value: float) -> str:
+    sign = "+" if value > 0 else "-" if value < 0 else ""
+    return f"{sign}{format_money(abs(value))}"
+
+
+def render_month_driver_summary(
+    category_detail: pd.DataFrame,
+    qty_growth: float | None,
+    amount_growth: float | None,
+    current_asp: float,
+    previous_asp: float,
+) -> None:
+    if category_detail.empty:
+        return
+
+    asp_growth = growth(current_asp, previous_asp)
+    if qty_growth is None or amount_growth is None or asp_growth is None:
+        headline = "전년 비교 기준이 부족해 확인 가능한 상품 유형의 증감액을 중심으로 분석했습니다."
+    elif qty_growth > 0 and asp_growth < 0 and amount_growth < qty_growth:
+        headline = (
+            f"판매수량은 전년 대비 {qty_growth:+.1%} 늘었지만 매출액은 {amount_growth:+.1%}에 "
+            f"그쳤습니다. 전체 평균단가·상품구성이 {asp_growth:+.1%} 낮아져 "
+            "수량 증가 효과를 상당 부분 상쇄했습니다."
+        )
+    elif qty_growth < 0 and asp_growth > 0 and amount_growth > qty_growth:
+        headline = (
+            f"판매수량은 {qty_growth:+.1%} 감소했지만 평균단가·상품구성이 {asp_growth:+.1%} "
+            f"높아져 매출액 변화는 {amount_growth:+.1%}로 방어했습니다."
+        )
+    elif amount_growth >= 0:
+        headline = (
+            f"매출액은 전년 대비 {amount_growth:+.1%} 변했습니다. 판매수량 변화 "
+            f"{qty_growth:+.1%}와 평균단가·상품구성 변화 {asp_growth:+.1%}가 함께 반영된 결과입니다."
+        )
+    else:
+        headline = (
+            f"매출액은 전년 대비 {amount_growth:+.1%} 변했습니다. 판매수량 변화 "
+            f"{qty_growth:+.1%}와 평균단가·상품구성 변화 {asp_growth:+.1%}를 함께 확인해야 합니다."
+        )
+
+    quantity_driver = category_detail.loc[category_detail["수량 변화량"].idxmax()]
+    revenue_driver = category_detail.loc[category_detail["금액 변화량"].idxmax()]
+    price_mix_drag = category_detail.loc[
+        category_detail["평균단가·상품구성 효과"].idxmin()
+    ]
+    revenue_drag = category_detail.loc[category_detail["금액 변화량"].idxmin()]
+
+    st.markdown("#### 월 변화 요인 자동 분석")
+    with st.container(border=True):
+        st.markdown(f"**한 줄 요약:** {headline}")
+        driver_columns = st.columns(4)
+        driver_columns[0].metric(
+            "수량 증가 기여 1위",
+            str(quantity_driver["유형"]),
+            f"{quantity_driver['수량 변화량']:+,.0f}개",
+            delta_color="off",
+        )
+        driver_columns[1].metric(
+            "매출 증가 기여 1위",
+            str(revenue_driver["유형"]),
+            format_signed_money(float(revenue_driver["금액 변화량"])),
+            delta_color="off",
+        )
+        driver_columns[2].metric(
+            "단가·구성 하락 영향 1위",
+            str(price_mix_drag["유형"]),
+            format_signed_money(float(price_mix_drag["평균단가·상품구성 효과"])),
+            delta_color="off",
+        )
+        driver_columns[3].metric(
+            "매출 감소 영향 1위",
+            str(revenue_drag["유형"]),
+            format_signed_money(float(revenue_drag["금액 변화량"])),
+            delta_color="off",
+        )
+
+        quantity_asp_rate = quantity_driver["평균단가 변화율"]
+        quantity_asp_text = (
+            "비교 기준 없음"
+            if pd.isna(quantity_asp_rate)
+            else f"{quantity_asp_rate:+.1%}"
+        )
+        revenue_main_effect = (
+            "수량 증가"
+            if abs(float(revenue_driver["수량 효과"]))
+            >= abs(float(revenue_driver["평균단가·상품구성 효과"]))
+            else "평균단가·상품구성 변화"
+        )
+        st.markdown(
+            f"- **수량 확대 요인:** {quantity_driver['유형']} 유형이 "
+            f"{quantity_driver['수량 변화량']:+,.0f}개로 가장 많이 변했습니다. "
+            f"해당 유형 매출은 {format_signed_money(float(quantity_driver['금액 변화량']))}, "
+            f"평균단가는 {quantity_asp_text} 변했습니다.\n"
+            f"- **매출 증가 요인:** {revenue_driver['유형']}의 매출 증감은 "
+            f"{format_signed_money(float(revenue_driver['금액 변화량']))}이며, "
+            f"수량 효과는 {format_signed_money(float(revenue_driver['수량 효과']))}, "
+            f"평균단가·상품구성 효과는 "
+            f"{format_signed_money(float(revenue_driver['평균단가·상품구성 효과']))}입니다. "
+            f"주된 요인은 **{revenue_main_effect}**입니다.\n"
+            f"- **상쇄 요인:** 평균단가·상품구성 하락 영향이 가장 큰 유형은 "
+            f"{price_mix_drag['유형']}이며, 매출에 "
+            f"{format_signed_money(float(price_mix_drag['평균단가·상품구성 효과']))}의 영향을 줬습니다. "
+            f"전체 매출 감소 영향이 가장 큰 유형은 {revenue_drag['유형']} "
+            f"({format_signed_money(float(revenue_drag['금액 변화량']))})입니다."
+        )
+        st.caption(
+            "평균단가·상품구성 효과는 실제 판매단가 변화뿐 아니라 할인, 저가·고가 품목의 "
+            "판매 비중 변화가 함께 반영된 값입니다. 현재 ERP 자료만으로 세 요인을 완전히 분리하지는 않습니다."
+        )
 
 
 def build_product_catalog(frame: pd.DataFrame) -> pd.DataFrame:
@@ -1177,6 +1292,13 @@ with detail_tab:
     category_detail = category_month_comparison(
         sales_view, base_year, detail_month, amount_col
     )
+    render_month_driver_summary(
+        category_detail,
+        qty_growth,
+        amount_growth,
+        current_asp,
+        previous_asp,
+    )
 
     st.markdown(f"#### {base_year}년 {detail_month}월 상품 유형별 매출 구성")
     st.caption(
@@ -1379,7 +1501,8 @@ with detail_tab:
             [
                 "유형", "금년 금액", "금년 구성비", "전년 금액", "전년 구성비",
                 "금액 변화량", "금액 변화율", "구성비 변화", "금년 수량",
-                "전년 수량", "금년 평균단가", "전년 평균단가", "평균단가 변화율",
+                "전년 수량", "수량 효과", "평균단가·상품구성 효과",
+                "금년 평균단가", "전년 평균단가", "평균단가 변화율",
             ]
         ].copy()
         for percent_column in [
@@ -1402,6 +1525,8 @@ with detail_tab:
                 "구성비 변화": st.column_config.NumberColumn("구성비 증감", format="%.1f%%p"),
                 "금년 수량": st.column_config.NumberColumn(format="%,.0f개"),
                 "전년 수량": st.column_config.NumberColumn(format="%,.0f개"),
+                "수량 효과": st.column_config.NumberColumn(format="%,.0f원"),
+                "평균단가·상품구성 효과": st.column_config.NumberColumn(format="%,.0f원"),
                 "금년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
                 "전년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
                 "평균단가 변화율": st.column_config.NumberColumn(format="%.1f%%"),
