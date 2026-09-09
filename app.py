@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -45,20 +47,42 @@ st.markdown(
 )
 
 
-def default_file(filename: str, env_name: str) -> Path | None:
+def default_file(prefix: str, env_name: str, legacy_filename: str) -> Path | None:
+    """Find repository workbooks independently of the process working directory."""
+    configured = os.environ.get(env_name)
+    if configured and Path(configured).is_file():
+        return Path(configured)
+
+    app_dir = Path(__file__).resolve().parent
+    for directory in (app_dir, app_dir / "data"):
+        candidates = []
+        for path in directory.glob("*"):
+            if not path.is_file() or path.suffix.lower() not in {".xlsx", ".xlsm"}:
+                continue
+            stem = unicodedata.normalize("NFC", path.stem)
+            if not stem.startswith(prefix):
+                continue
+            suffix = stem[len(prefix):].strip(" _-")
+            if suffix and not re.fullmatch(r"[0-9._ -]+", suffix):
+                continue
+            # Compare numeric date parts, so 09.30 sorts after 08.31.
+            date_parts = tuple(int(part) for part in re.findall(r"\d+", suffix))
+            candidates.append((date_parts, path.name, path))
+        if candidates:
+            return max(candidates, key=lambda item: (item[0], item[1]))[2]
+
     candidates = [
-        Path(os.environ[env_name]) if os.environ.get(env_name) else None,
-        Path.cwd() / "data" / filename,
-        Path.home() / "OneDrive" / "바탕 화면" / "개인 rev 1 완성" / "테마" / filename,
-        Path.home() / "OneDrive" / "바탕 화면" / "개인 프로젝트" / filename,
-        Path.home() / "Desktop" / "개인 프로젝트" / filename,
+        Path.cwd() / "data" / legacy_filename,
+        Path.home() / "OneDrive" / "바탕 화면" / "개인 rev 1 완성" / "테마" / legacy_filename,
+        Path.home() / "OneDrive" / "바탕 화면" / "개인 프로젝트" / legacy_filename,
+        Path.home() / "Desktop" / "개인 프로젝트" / legacy_filename,
     ]
-    return next((path for path in candidates if path and path.exists()), None)
+    return next((path for path in candidates if path.is_file()), None)
 
 
-DEFAULT_PREVIOUS_SALES = default_file("25년도 매출.xlsx", "PREVIOUS_SALES_PATH")
-DEFAULT_CURRENT_SALES = default_file("26년도 매출.xlsx", "CURRENT_SALES_PATH")
-DEFAULT_PURCHASE = default_file("25, 26년도 매입.xlsx", "PURCHASE_PATH")
+DEFAULT_PREVIOUS_SALES = default_file("전년도 판매", "PREVIOUS_SALES_PATH", "25년도 매출.xlsx")
+DEFAULT_CURRENT_SALES = default_file("금년도 판매", "CURRENT_SALES_PATH", "26년도 매출.xlsx")
+DEFAULT_PURCHASE = default_file("매입", "PURCHASE_PATH", "25, 26년도 매입.xlsx")
 
 
 @st.cache_data(show_spinner="엑셀 Rawdata를 읽고 있습니다...")
@@ -1014,25 +1038,29 @@ st.caption("ERP에서 내려받은 엑셀 3개를 수정하지 않고 읽기 전
 
 with st.sidebar:
     st.header("데이터 연결")
-    st.caption("전년도 매출·올해 매출·매입 파일을 모두 올리면 자동으로 분석합니다.")
-    previous_sales_upload = st.file_uploader(
-        "1. 전년도 매출",
-        type=["xlsx", "xlsm"],
-        help="ERP에서 내려받은 전년도 매출 엑셀 파일을 올려주세요.",
-        key="previous_sales_upload",
-    )
-    current_sales_upload = st.file_uploader(
-        "2. 올해 매출",
-        type=["xlsx", "xlsm"],
-        help="ERP에서 내려받은 올해 매출 엑셀 파일을 올려주세요.",
-        key="current_sales_upload",
-    )
-    purchase_upload = st.file_uploader(
-        "3. 매입",
-        type=["xlsx", "xlsm"],
-        help="전년도와 올해 내역이 들어 있는 매입 엑셀 파일을 올려주세요.",
-        key="purchase_upload",
-    )
+    st.caption("저장된 전년도 판매·금년도 판매·매입 파일을 자동으로 연결합니다.")
+    st.caption("파일명 뒤의 날짜는 데이터가 포함된 기준일입니다.")
+    with st.expander("다른 파일로 분석하기", expanded=not all(
+        (DEFAULT_PREVIOUS_SALES, DEFAULT_CURRENT_SALES, DEFAULT_PURCHASE)
+    )):
+        previous_sales_upload = st.file_uploader(
+            "1. 전년도 판매",
+            type=["xlsx", "xlsm"],
+            help="ERP에서 내려받은 전년도 매출 엑셀 파일을 올려주세요.",
+            key="previous_sales_upload",
+        )
+        current_sales_upload = st.file_uploader(
+            "2. 금년도 판매",
+            type=["xlsx", "xlsm"],
+            help="ERP에서 내려받은 올해 매출 엑셀 파일을 올려주세요.",
+            key="current_sales_upload",
+        )
+        purchase_upload = st.file_uploader(
+            "3. 매입",
+            type=["xlsx", "xlsm"],
+            help="전년도와 올해 내역이 들어 있는 매입 엑셀 파일을 올려주세요.",
+            key="purchase_upload",
+        )
 
 previous_sales_bytes = previous_sales_upload.getvalue() if previous_sales_upload else None
 current_sales_bytes = current_sales_upload.getvalue() if current_sales_upload else None
@@ -1080,13 +1108,13 @@ if not valid_years:
 
 with st.sidebar:
     if previous_sales_upload:
-        st.success(f"전년도 매출: {previous_sales_upload.name}")
+        st.success(f"전년도 판매: {previous_sales_upload.name}")
     else:
-        st.success(f"전년도 매출: {Path(previous_sales_path).name}")
+        st.success(f"전년도 판매: {Path(previous_sales_path).name}")
     if current_sales_upload:
-        st.success(f"올해 매출: {current_sales_upload.name}")
+        st.success(f"금년도 판매: {current_sales_upload.name}")
     else:
-        st.success(f"올해 매출: {Path(current_sales_path).name}")
+        st.success(f"금년도 판매: {Path(current_sales_path).name}")
     if purchase_upload:
         st.success(f"매입: {purchase_upload.name}")
     else:
