@@ -57,8 +57,8 @@ def render_plotly_chart(fig, **kwargs):
         axis_title = (fig.layout.xaxis.title.text if horizontal else fig.layout.yaxis.title.text) or ""
         unit = "원" if "원" in axis_title or "원" in (trace.hovertemplate or "") else "개"
         trace.update(
-            text=["" if pd.isna(value) or float(value) == 0 else f"{float(value):,.0f}" for value in values],
-            texttemplate=f"%{{text}}{unit}",
+            text=["" if pd.isna(value) or float(value) == 0 else f"{float(value):,.0f}{unit}" for value in values],
+            texttemplate="%{text}",
             textposition="outside", textfont=dict(size=10),
             cliponaxis=False, constraintext="none",
         )
