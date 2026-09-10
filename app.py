@@ -49,6 +49,36 @@ st.markdown(
 
 def render_plotly_chart(fig, **kwargs):
     """Keep titles above the plot and legends in their own space below it."""
+    # Pre-format persistent labels in Python for consistent thousands separators.
+    bars = [trace for trace in fig.data if trace.type == "bar"]
+    for trace in bars:
+        horizontal = trace.orientation == "h"
+        values = trace.x if horizontal else trace.y
+        axis_title = (fig.layout.xaxis.title.text if horizontal else fig.layout.yaxis.title.text) or ""
+        unit = "원" if "원" in axis_title or "원" in (trace.hovertemplate or "") else "개"
+        trace.update(
+            text=["" if pd.isna(value) or float(value) == 0 else f"{float(value):,.0f}" for value in values],
+            texttemplate=f"%{{text}}{unit}",
+            textposition="outside", textfont=dict(size=10),
+            cliponaxis=False, constraintext="none",
+        )
+    # Reserve space beyond both positive and negative bar tips for the labels.
+    if bars and fig.layout.barmode not in ("stack", "relative"):
+        for horizontal in (True, False):
+            values = [
+                float(value) for trace in bars if (trace.orientation == "h") == horizontal
+                for value in (trace.x if horizontal else trace.y) if pd.notna(value)
+            ]
+            if values:
+                low, high = min(0, min(values)), max(0, max(values))
+                span = high - low
+                if span:
+                    limits = [low - span * 0.45 if low < 0 else 0,
+                              high + span * 0.45 if high > 0 else 0]
+                    if horizontal:
+                        fig.update_xaxes(range=limits)
+                    else:
+                        fig.update_yaxes(range=limits)
     is_pie = any(trace.type == "pie" for trace in fig.data)
     has_legend = is_pie or len(fig.data) > 1
     if has_legend:
@@ -450,7 +480,7 @@ def render_month_driver_summary(
         driver_columns[0].metric(
             f"수량 {quantity_direction} 기여 1위",
             str(quantity_driver["유형"]),
-            f"{quantity_driver['수량 변화량']:+,.0f}개",
+            f"{quantity_driver['수량 변화량']:,.0f}개",
             delta_color="off",
         )
         driver_columns[1].metric(
@@ -468,8 +498,8 @@ def render_month_driver_summary(
         )
         st.markdown(
             f"- **수량 {quantity_direction} 요인:** 전체 판매수량은 전년 동월보다 "
-            f"{total_quantity_change:+,.0f}개 변했습니다. 이 가운데 "
-            f"**{quantity_driver['유형']}**이 {quantity_driver['수량 변화량']:+,.0f}개로 "
+            f"{total_quantity_change:,.0f}개 변했습니다. 이 가운데 "
+            f"**{quantity_driver['유형']}**이 {quantity_driver['수량 변화량']:,.0f}개로 "
             f"가장 크게 기여했습니다. 해당 유형의 실제 매출은 "
             f"{format_signed_money(float(quantity_driver['금액 변화량']))}, "
             f"평균단가는 {quantity_asp_text} 변했습니다.\n"
@@ -1212,7 +1242,7 @@ def render_store_tab(
     contribution = go.Figure(go.Bar(
         x=changes["금액 증감"], y=changes["유형"], orientation="h",
         marker_color=["#10B981" if value >= 0 else "#EF4444" for value in changes["금액 증감"]],
-        hovertemplate="%{y}<br>전년 대비 %{x:+,.0f}원<extra></extra>",
+        hovertemplate="%{y}<br>전년 대비 %{x:,.0f}원<extra></extra>",
     ))
     contribution.add_vline(x=0, line_color="#94A3B8")
     contribution.update_layout(height=max(320, 100 + len(changes) * 30),
@@ -1721,7 +1751,7 @@ with detail_tab:
                 ],
                 customdata=contribution["변화율 표시"],
                 hovertemplate=(
-                    "%{y}<br>매출 증감 %{x:+,.0f}원"
+                    "%{y}<br>매출 증감 %{x:,.0f}원"
                     "<br>변화율 %{customdata}<extra></extra>"
                 ),
             )
