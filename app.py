@@ -47,6 +47,29 @@ st.markdown(
 )
 
 
+def render_plotly_chart(fig, **kwargs):
+    """Keep titles above the plot and legends in their own space below it."""
+    is_pie = any(trace.type == "pie" for trace in fig.data)
+    has_legend = is_pie or len(fig.data) > 1
+    if has_legend:
+        fig.update_layout(
+            legend=dict(
+                orientation="h", x=0, xanchor="left",
+                y=-0.18 if not is_pie else -0.08, yanchor="top",
+            ),
+            margin=dict(t=80, b=140 if is_pie else 110, autoexpand=True),
+            height=(fig.layout.height or 400) + (100 if is_pie else 65),
+        )
+    if fig.layout.title.text:
+        fig.update_layout(title=dict(
+            x=0.01, xanchor="left", y=0.98, yanchor="top",
+            font=dict(size=16), automargin=True,
+        ))
+    fig.update_xaxes(automargin=True, separatethousands=True)
+    fig.update_yaxes(automargin=True, separatethousands=True)
+    return st.plotly_chart(fig, **kwargs)
+
+
 def default_file(prefix: str, env_name: str, legacy_filename: str) -> Path | None:
     """Find repository workbooks independently of the process working directory."""
     configured = os.environ.get(env_name)
@@ -891,7 +914,7 @@ def render_forecast_tab(sales: pd.DataFrame) -> None:
         yaxis_title=None,
         xaxis_tickformat=",.0f",
     )
-    st.plotly_chart(summary_fig, width="stretch", key="forecast_batch_summary_chart")
+    render_plotly_chart(summary_fig, width="stretch", key="forecast_batch_summary_chart")
 
     zero_history = [item for item in forecasts if item["last_year_demand"] == 0]
     if zero_history:
@@ -967,7 +990,7 @@ def render_forecast_tab(sales: pd.DataFrame) -> None:
             yaxis_title=None,
             yaxis_tickformat=",.0f",
         )
-        st.plotly_chart(
+        render_plotly_chart(
             weekly_fig,
             width="stretch",
             key=f"forecast_weekly_{selected_forecast['target_sku']}",
@@ -1007,7 +1030,7 @@ def render_forecast_tab(sales: pd.DataFrame) -> None:
             yaxis_title=None,
             xaxis_tickformat=",.0f",
         )
-        st.plotly_chart(
+        render_plotly_chart(
             stock_fig,
             width="stretch",
             key=f"forecast_stock_{selected_forecast['target_sku']}",
@@ -1131,10 +1154,10 @@ def render_store_tab(
 
     left, right = st.columns(2)
     with left:
-        st.plotly_chart(store_comparison_bars(summary, "매장명", "금액", year, "매장별 판매금액 · 전년 동기 비교"),
+        render_plotly_chart(store_comparison_bars(summary, "매장명", "금액", year, "매장별 판매금액 · 전년 동기 비교"),
                         width="stretch", key="store_amount_rank")
     with right:
-        st.plotly_chart(store_comparison_bars(summary, "매장명", "수량", year, "매장별 판매수량 · 전년 동기 비교"),
+        render_plotly_chart(store_comparison_bars(summary, "매장명", "수량", year, "매장별 판매수량 · 전년 동기 비교"),
                         width="stretch", key="store_quantity_rank")
     with st.expander("매장별 실적 비교표"):
         render_store_table(summary)
@@ -1156,10 +1179,10 @@ def render_store_tab(
 
     left, right = st.columns(2)
     with left:
-        st.plotly_chart(comparison_chart(detail, year, amount_col, f"{selected} · 월별 판매금액", True, months),
+        render_plotly_chart(comparison_chart(detail, year, amount_col, f"{selected} · 월별 판매금액", True, months),
                         width="stretch", key="store_detail_amount_monthly")
     with right:
-        st.plotly_chart(comparison_chart(detail, year, "수량", f"{selected} · 월별 판매수량", False, months),
+        render_plotly_chart(comparison_chart(detail, year, "수량", f"{selected} · 월별 판매수량", False, months),
                         width="stretch", key="store_detail_quantity_monthly")
 
     category = store_period_comparison(detail, year, amount_col, ["유형"])
@@ -1179,10 +1202,10 @@ def render_store_tab(
             ))
             pie.update_layout(title=f"{selected} · {period} {measure} 구성비", height=440,
                               margin=dict(l=10, r=10, t=60, b=20))
-            st.plotly_chart(pie, width="stretch", key="store_category_composition")
+            render_plotly_chart(pie, width="stretch", key="store_category_composition")
             st.caption("도넛 구성비는 반품 차감 후 실적이 양수인 유형의 합계를 기준으로 계산합니다.")
     with right:
-        st.plotly_chart(store_comparison_bars(category, "유형", metric, year, "상품 유형별 전년 동기 비교"),
+        render_plotly_chart(store_comparison_bars(category, "유형", metric, year, "상품 유형별 전년 동기 비교"),
                         width="stretch", key="store_category_yoy")
     st.markdown("#### 상품 유형별 매출 증감 기여")
     changes = category.sort_values("금액 증감")
@@ -1193,9 +1216,9 @@ def render_store_tab(
     ))
     contribution.add_vline(x=0, line_color="#94A3B8")
     contribution.update_layout(height=max(320, 100 + len(changes) * 30),
-                               xaxis_title="전년 동기 대비 판매금액 증감(원)", xaxis_tickformat="+,.0f",
+                               xaxis_title="전년 동기 대비 판매금액 증감(원)", xaxis_tickformat=",.0f",
                                margin=dict(l=10, r=10, t=20, b=25))
-    st.plotly_chart(contribution, width="stretch", key="store_category_contribution")
+    render_plotly_chart(contribution, width="stretch", key="store_category_contribution")
     with st.expander("상품 유형별 상세 비교표"):
         render_store_table(category)
     st.markdown("#### 판매 품목별 상세")
@@ -1392,7 +1415,7 @@ with overview_tab:
             True,
             month_range,
         )
-        event = st.plotly_chart(
+        event = render_plotly_chart(
             sales_amount_chart,
             width="stretch",
             key="sales_amount_month_chart",
@@ -1400,7 +1423,7 @@ with overview_tab:
             selection_mode="points",
         )
     with sales_quantity_column:
-        st.plotly_chart(
+        render_plotly_chart(
             comparison_chart(
                 sales_view,
                 base_year,
@@ -1415,7 +1438,7 @@ with overview_tab:
 
     purchase_amount_column, purchase_quantity_column = st.columns(2)
     with purchase_amount_column:
-        st.plotly_chart(
+        render_plotly_chart(
             comparison_chart(
                 purchase_view,
                 base_year,
@@ -1429,7 +1452,7 @@ with overview_tab:
             key="purchase_amount_month_chart",
         )
     with purchase_quantity_column:
-        st.plotly_chart(
+        render_plotly_chart(
             comparison_chart(
                 purchase_view,
                 base_year,
@@ -1443,7 +1466,7 @@ with overview_tab:
             key="purchase_quantity_month_chart",
         )
 
-    st.plotly_chart(
+    render_plotly_chart(
         purchase_sales_flow(sales_view, purchase_view, base_year, month_range),
         width="stretch",
         key="purchase_sales_flow",
@@ -1572,7 +1595,7 @@ with detail_tab:
                     )
                 ],
             )
-            st.plotly_chart(
+            render_plotly_chart(
                 pie_fig,
                 width="stretch",
                 key=f"category_composition_{base_year}_{detail_month}",
@@ -1618,7 +1641,7 @@ with detail_tab:
                 xaxis_tickformat=",.0f",
                 xaxis_separatethousands=True,
             )
-            st.plotly_chart(
+            render_plotly_chart(
                 comparison_fig,
                 width="stretch",
                 key=f"category_amount_yoy_{base_year}_{detail_month}",
@@ -1709,10 +1732,10 @@ with detail_tab:
             margin=dict(l=10, r=10, t=20, b=25),
             xaxis_title="전년 동월 대비 매출 증감액(원)",
             yaxis_title=None,
-            xaxis_tickformat="+,.0f",
+            xaxis_tickformat=",.0f",
             xaxis_separatethousands=True,
         )
-        st.plotly_chart(
+        render_plotly_chart(
             contribution_fig,
             width="stretch",
             key=f"category_contribution_{base_year}_{detail_month}",
@@ -2029,7 +2052,7 @@ if False:
             yaxis_title=None,
             yaxis_tickformat=",.0f",
         )
-        st.plotly_chart(weekly_fig, width="stretch", key="forecast_weekly_chart")
+        render_plotly_chart(weekly_fig, width="stretch", key="forecast_weekly_chart")
 
     with stock_column:
         stock_fig = go.Figure()
@@ -2080,7 +2103,7 @@ if False:
             yaxis_title=None,
             xaxis_tickformat=",.0f",
         )
-        st.plotly_chart(stock_fig, width="stretch", key="forecast_stock_chart")
+        render_plotly_chart(stock_fig, width="stretch", key="forecast_stock_chart")
 
     with st.expander("계산 근거 자세히 보기"):
         st.markdown(
