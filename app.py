@@ -1272,10 +1272,32 @@ def render_store_tab(
         render_store_table(category)
     st.markdown("#### 판매 품목별 상세")
     products = store_period_comparison(detail, year, amount_col, ["유형", "품목명", "표준SKU"])
+    filter_column, search_column = st.columns([1, 2])
+    product_categories = ["전체"] + sorted(products["유형"].dropna().unique().tolist())
+    if st.session_state.get("store_product_category", "전체") not in product_categories:
+        st.session_state["store_product_category"] = "전체"
+    with filter_column:
+        product_category = st.selectbox("상세 품목 분류", product_categories, key="store_product_category")
+    with search_column:
+        product_search = st.text_input(
+            "품목명 / SKU 검색", placeholder="예: 방수팩, 스마트, MAPS",
+            key="store_product_search",
+        ).strip()
+    if product_category != "전체":
+        products = products.loc[products["유형"].eq(product_category)]
+    if product_search:
+        products = products.loc[
+            products["품목명"].fillna("").astype(str).str.contains(product_search, case=False, regex=False)
+            | products["표준SKU"].fillna("").astype(str).str.contains(product_search, case=False, regex=False)
+        ]
     sort_by = st.radio("품목 정렬", ["판매금액순", "판매수량순"], horizontal=True, key="store_product_sort")
     products = products.sort_values("금년 금액" if sort_by == "판매금액순" else "금년 수량", ascending=False)
-    render_store_table(products)
-    st.caption("선택한 매장·기간·상품 조건 내 실적입니다. 금액과 수량에는 반품이 포함됩니다.")
+    st.caption(f"표시 품목: {len(products):,}개 · 분류: {product_category}")
+    if products.empty:
+        st.info("조건에 맞는 품목이 없습니다. 분류를 전체로 바꾸거나 검색어를 지워주세요.")
+    else:
+        render_store_table(products)
+    st.caption("이 필터는 상세 표에 적용됩니다. 구성비는 표 필터 적용 전의 선택 매장·기간·상품 조건 기준이며, 금액과 수량에는 반품이 포함됩니다.")
 
 
 st.title("테마상품 매입·매출 대시보드")
