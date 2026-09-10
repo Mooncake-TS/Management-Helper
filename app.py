@@ -1033,6 +1033,179 @@ def render_forecast_tab(sales: pd.DataFrame) -> None:
         )
 
 
+def store_period_comparison(
+    frame: pd.DataFrame, year: int, amount_col: str, group_columns: list[str]
+) -> pd.DataFrame:
+    """Outer-align groups so new and prior-year-only stores/items remain visible."""
+    parts = []
+    for compare_year, label in ((year, "금년"), (year - 1, "전년")):
+        part = (
+            frame.loc[frame["연도"].eq(compare_year)]
+            .groupby(group_columns, dropna=False, observed=True)[[amount_col, "수량"]]
+            .sum()
+            .rename(columns={amount_col: f"{label} 금액", "수량": f"{label} 수량"})
+        )
+        parts.append(part)
+    result = pd.concat(parts, axis=1).fillna(0).reset_index()
+    for metric in ("금액", "수량"):
+        result[f"{metric} 증감"] = result[f"금년 {metric}"] - result[f"전년 {metric}"]
+        denominator = result[f"전년 {metric}"].where(result[f"전년 {metric}"].gt(0))
+        result[f"{metric} 증감률"] = result[f"{metric} 증감"] / denominator
+    for label in ("금년", "전년"):
+        total = result[f"{label} 금액"].sum()
+        result[f"{label} 구성비"] = result[f"{label} 금액"] / total if total > 0 else float("nan")
+    return result.sort_values("금년 금액", ascending=False).reset_index(drop=True)
+
+
+def store_comparison_bars(
+    summary: pd.DataFrame, group_col: str, metric: str, year: int, title: str
+):
+    ordered = summary.sort_values(f"금년 {metric}", ascending=True)
+    fig = go.Figure()
+    unit = "원" if metric == "금액" else "개"
+    for label, compare_year, color in (
+        ("전년", year - 1, "#CBD5E1"), ("금년", year, "#2563EB")
+    ):
+        fig.add_trace(go.Bar(
+            x=ordered[f"{label} {metric}"], y=ordered[group_col],
+            name=str(compare_year), orientation="h", marker_color=color,
+            hovertemplate=f"%{{y}}<br>{compare_year}년 %{{x:,.0f}}{unit}<extra></extra>",
+        ))
+    fig.update_layout(
+        title=title, barmode="group", height=max(360, 120 + len(ordered) * 42),
+        margin=dict(l=10, r=10, t=65, b=25),
+        xaxis_title=f"판매{metric}({unit})", xaxis_tickformat=",.0f",
+        yaxis_title=None, legend=dict(orientation="h", y=1.08),
+    )
+    return fig
+
+
+def render_store_table(summary: pd.DataFrame) -> None:
+    formats = {
+        column: ("{:+.1%}" if "증감률" in column else "{:.1%}" if "구성비" in column else "{:,.0f}")
+        for column in summary.columns if pd.api.types.is_numeric_dtype(summary[column])
+    }
+    st.dataframe(summary.style.format(formats, na_rep="—"), width="stretch", hide_index=True)
+
+
+def render_store_tab(
+    sales: pd.DataFrame, year: int, default_months: tuple[int, int],
+    categories: list[str], sku_filter: set[str] | None, amount_col: str,
+) -> None:
+    st.subheader("매장별 판매 분석")
+    st.caption("판매자료의 창고명을 매장명으로 사용합니다. 기준 연도·상품 유형·품목·금액 기준은 왼쪽 조회 조건을 따릅니다.")
+    mode = st.radio("기간 선택", ["기간 범위", "단일 월"], horizontal=True, key="store_period_mode")
+    if mode == "기간 범위":
+        months = st.slider("매장 분석 기간", 1, 12, value=tuple(default_months), key="store_month_range")
+    else:
+        month = st.select_slider(
+            "매장 분석 월", options=list(range(1, 13)), value=default_months[1],
+            format_func=lambda value: f"{value}월", key="store_single_month",
+        )
+        months = (month, month)
+    period = f"{months[0]}월" if months[0] == months[1] else f"{months[0]}~{months[1]}월"
+    st.caption(f"{year}년 {period} · 전년 동기: {year - 1}년 {period} · 금액 기준: {amount_col}")
+
+    view = filtered_for_years(sales, [year - 1, year], months, categories, sku_filter).copy()
+    view["매장명"] = view["창고명"].fillna("").astype(str).str.strip().replace("", "매장명 미입력")
+    if view.empty:
+        st.info("선택한 기간과 조회 조건에 해당하는 판매자료가 없습니다.")
+        return
+    available = sales.loc[sales["연도"].eq(year), "거래일자"].dropna()
+    if not available.empty:
+        st.caption(f"{year}년 판매자료의 마지막 거래일: {available.max():%Y-%m-%d}. 비교는 선택한 월 전체 기준입니다.")
+    if not view["연도"].eq(year).any():
+        st.info("선택한 기간의 금년 판매자료가 없어 전년 실적만 표시합니다.")
+    if not view["연도"].eq(year - 1).any():
+        st.info("선택한 기간의 전년 판매자료가 없습니다. 전년 실적은 0, 증감률은 —로 표시합니다.")
+
+    summary = store_period_comparison(view, year, amount_col, ["매장명"])
+    total_amount = float(summary["금년 금액"].sum())
+    total_quantity = float(summary["금년 수량"].sum())
+    metrics = st.columns(4)
+    metrics[0].metric("기간 판매금액", format_money(total_amount))
+    metrics[1].metric("기간 판매수량", f"{total_quantity:,.0f}개")
+    metrics[2].metric("판매금액 1위", str(summary.iloc[0]["매장명"]) if summary["금년 금액"].max() > 0 else "없음")
+    qty_leader = summary.loc[summary["금년 수량"].idxmax()]
+    metrics[3].metric("판매수량 1위", str(qty_leader["매장명"]) if qty_leader["금년 수량"] > 0 else "없음")
+
+    left, right = st.columns(2)
+    with left:
+        st.plotly_chart(store_comparison_bars(summary, "매장명", "금액", year, "매장별 판매금액 · 전년 동기 비교"),
+                        width="stretch", key="store_amount_rank")
+    with right:
+        st.plotly_chart(store_comparison_bars(summary, "매장명", "수량", year, "매장별 판매수량 · 전년 동기 비교"),
+                        width="stretch", key="store_quantity_rank")
+    with st.expander("매장별 실적 비교표"):
+        render_store_table(summary)
+        st.caption("반품을 차감한 순판매 기준입니다. 전년 실적이 0 이하인 경우 증감률은 —로 표시합니다.")
+
+    st.divider()
+    st.subheader("매장 상세 분석")
+    selected = st.selectbox("분석할 매장", summary["매장명"].tolist(), key="store_detail_selection")
+    detail = view.loc[view["매장명"].eq(selected)]
+    row = summary.loc[summary["매장명"].eq(selected)].iloc[0]
+    cols = st.columns(4)
+    for col, metric, label in ((cols[0], "금액", "매장 판매금액"), (cols[1], "수량", "매장 판매수량")):
+        value = format_money(float(row[f"금년 {metric}"])) if metric == "금액" else f'{row["금년 수량"]:,.0f}개'
+        rate = row[f"{metric} 증감률"]
+        col.metric(label, value, "전년 비교 기준 없음" if pd.isna(rate) else f"{rate:+.1%} 전년 대비")
+    cols[2].metric("전체 판매금액 중 비중", f'{row["금년 구성비"]:.1%}' if pd.notna(row["금년 구성비"]) else "—")
+    asp = row["금년 금액"] / row["금년 수량"] if row["금년 수량"] > 0 else None
+    cols[3].metric("평균 판매단가", format_money(float(asp)) if asp is not None else "—")
+
+    left, right = st.columns(2)
+    with left:
+        st.plotly_chart(comparison_chart(detail, year, amount_col, f"{selected} · 월별 판매금액", True, months),
+                        width="stretch", key="store_detail_amount_monthly")
+    with right:
+        st.plotly_chart(comparison_chart(detail, year, "수량", f"{selected} · 월별 판매수량", False, months),
+                        width="stretch", key="store_detail_quantity_monthly")
+
+    category = store_period_comparison(detail, year, amount_col, ["유형"])
+    st.markdown("#### 상품 유형별 판매 구성")
+    measure = st.radio("구성비 기준", ["판매금액", "판매수량"], horizontal=True, key="store_composition_measure")
+    metric = "금액" if measure == "판매금액" else "수량"
+    positive = category.loc[category[f"금년 {metric}"].gt(0)]
+    left, right = st.columns(2)
+    with left:
+        if positive.empty:
+            st.info("양수인 순판매 실적이 없어 구성비를 표시할 수 없습니다.")
+        else:
+            pie = go.Figure(go.Pie(
+                labels=positive["유형"], values=positive[f"금년 {metric}"],
+                hole=0.45, textinfo="label+percent",
+                hovertemplate="%{label}<br>%{value:,.0f}<br>%{percent}<extra></extra>",
+            ))
+            pie.update_layout(title=f"{selected} · {period} {measure} 구성비", height=440,
+                              margin=dict(l=10, r=10, t=60, b=20))
+            st.plotly_chart(pie, width="stretch", key="store_category_composition")
+            st.caption("도넛 구성비는 반품 차감 후 실적이 양수인 유형의 합계를 기준으로 계산합니다.")
+    with right:
+        st.plotly_chart(store_comparison_bars(category, "유형", metric, year, "상품 유형별 전년 동기 비교"),
+                        width="stretch", key="store_category_yoy")
+    st.markdown("#### 상품 유형별 매출 증감 기여")
+    changes = category.sort_values("금액 증감")
+    contribution = go.Figure(go.Bar(
+        x=changes["금액 증감"], y=changes["유형"], orientation="h",
+        marker_color=["#10B981" if value >= 0 else "#EF4444" for value in changes["금액 증감"]],
+        hovertemplate="%{y}<br>전년 대비 %{x:+,.0f}원<extra></extra>",
+    ))
+    contribution.add_vline(x=0, line_color="#94A3B8")
+    contribution.update_layout(height=max(320, 100 + len(changes) * 30),
+                               xaxis_title="전년 동기 대비 판매금액 증감(원)", xaxis_tickformat="+,.0f",
+                               margin=dict(l=10, r=10, t=20, b=25))
+    st.plotly_chart(contribution, width="stretch", key="store_category_contribution")
+    with st.expander("상품 유형별 상세 비교표"):
+        render_store_table(category)
+    st.markdown("#### 판매 품목별 상세")
+    products = store_period_comparison(detail, year, amount_col, ["유형", "품목명", "표준SKU"])
+    sort_by = st.radio("품목 정렬", ["판매금액순", "판매수량순"], horizontal=True, key="store_product_sort")
+    products = products.sort_values("금년 금액" if sort_by == "판매금액순" else "금년 수량", ascending=False)
+    render_store_table(products)
+    st.caption("선택한 매장·기간·상품 조건 내 실적입니다. 금액과 수량에는 반품이 포함됩니다.")
+
+
 st.title("테마상품 매입·매출 대시보드")
 st.caption("ERP에서 내려받은 엑셀 3개를 수정하지 않고 읽기 전용으로 분석합니다.")
 
@@ -1173,8 +1346,8 @@ previous_purchase_amount = float(previous_purchase[amount_col].fillna(0).sum())
 average_price = sales_amount / sales_qty if sales_qty else 0
 previous_average_price = previous_sales_amount / previous_sales_qty if previous_sales_qty else 0
 
-overview_tab, detail_tab, forecast_tab, quality_tab = st.tabs(
-    ["전체 현황", "월 상세", "예측 발주", "데이터 상태"]
+overview_tab, detail_tab, store_tab, forecast_tab, quality_tab = st.tabs(
+    ["전체 현황", "월 상세", "매장별", "예측 발주", "데이터 상태"]
 )
 
 with overview_tab:
@@ -1578,6 +1751,9 @@ with detail_tab:
                 "평균단가 변화율": st.column_config.NumberColumn(format="%.1f%%"),
             },
         )
+
+with store_tab:
+    render_store_tab(sales, base_year, month_range, selected_categories, sku_filter, amount_col)
 
 with forecast_tab:
     render_forecast_tab(sales)
