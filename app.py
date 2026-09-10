@@ -80,15 +80,34 @@ def render_plotly_chart(fig, **kwargs):
                     else:
                         fig.update_yaxes(range=limits)
     is_pie = any(trace.type == "pie" for trace in fig.data)
-    has_legend = is_pie or len(fig.data) > 1
-    if has_legend:
+    if is_pie:
+        for trace in fig.data:
+            if trace.type != "pie":
+                continue
+            total = sum(float(value) for value in trace.values if pd.notna(value) and value > 0)
+            trace.update(
+                text=[
+                    f"{label}<br>{float(value) / total:.1%}"
+                    if total and pd.notna(value) and float(value) / total >= 0.05 else ""
+                    for label, value in zip(trace.labels, trace.values)
+                ],
+                textinfo="text", texttemplate="%{text}", textposition="inside",
+                insidetextorientation="auto", domain=dict(x=[0.32, 1]),
+            )
         fig.update_layout(
-            legend=dict(
-                orientation="h", x=0, xanchor="left",
-                y=-0.18 if not is_pie else -0.08, yanchor="top",
-            ),
-            margin=dict(t=80, b=140 if is_pie else 110, autoexpand=True),
-            height=(fig.layout.height or 400) + (100 if is_pie else 65),
+            legend=dict(orientation="v", x=0, xanchor="left", y=1, yanchor="top", font=dict(size=11)),
+            margin=dict(l=10, r=10, t=85, b=25, autoexpand=True),
+            uniformtext=dict(minsize=10, mode="hide"),
+            height=max(fig.layout.height or 440, 500),
+        )
+        for annotation in fig.layout.annotations or ():
+            if annotation.x == 0.5 and annotation.y == 0.5:
+                annotation.x = 0.66
+    elif len(fig.data) > 1:
+        fig.update_layout(
+            legend=dict(orientation="h", x=0, xanchor="left", y=-0.18, yanchor="top"),
+            margin=dict(t=80, b=110, autoexpand=True),
+            height=(fig.layout.height or 400) + 65,
         )
     if fig.layout.title.text:
         fig.update_layout(title=dict(
