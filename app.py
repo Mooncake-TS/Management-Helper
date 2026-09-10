@@ -1103,7 +1103,7 @@ def render_store_tab(
             format_func=lambda value: f"{value}월", key="store_single_month",
         )
         months = (month, month)
-    period = f"{months[0]}월" if months[0] == months[1] else f"{months[0]}~{months[1]}월"
+    period = f"{months[0]}월" if months[0] == months[1] else f"{months[0]}월 ~ {months[1]}월"
     st.caption(f"{year}년 {period} · 전년 동기: {year - 1}년 {period} · 금액 기준: {amount_col}")
 
     view = filtered_for_years(sales, [year - 1, year], months, categories, sku_filter).copy()
@@ -1152,7 +1152,7 @@ def render_store_tab(
         col.metric(label, value, "전년 비교 기준 없음" if pd.isna(rate) else f"{rate:+.1%} 전년 대비")
     cols[2].metric("전체 판매금액 중 비중", f'{row["금년 구성비"]:.1%}' if pd.notna(row["금년 구성비"]) else "—")
     asp = row["금년 금액"] / row["금년 수량"] if row["금년 수량"] > 0 else None
-    cols[3].metric("평균 판매단가", format_money(float(asp)) if asp is not None else "—")
+    cols[3].metric("평균 판매단가", f"{asp:,.0f}원" if asp is not None else "—")
 
     left, right = st.columns(2)
     with left:
