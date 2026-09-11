@@ -1302,7 +1302,7 @@ def render_store_tab(
 
 
 st.title("테마상품 매입·매출 대시보드")
-st.caption("ERP 매입·매출과 사업계획 엑셀을 읽기 전용으로 분석합니다.")
+st.caption("ERP 매입·매출, 사업계획 달성 현황과 연말 예상 매출을 분석합니다.")
 
 with st.sidebar:
     st.header("데이터 연결")
