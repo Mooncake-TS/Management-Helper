@@ -177,8 +177,13 @@ def render_business_plan(root: Path):
         st.info(f"{year}년의 연간 목표 자료가 없어 목표 달성률은 표시하지 않습니다. 매출 추이와 전년 동기 성장률은 확인할 수 있습니다.")
 
     def line(fig, name, x, y, color, dash=None):
-        fig.add_trace(go.Scatter(name=name, x=x, y=[None if pd.isna(v) else float(v) for v in y],
-                                mode="lines+markers", connectgaps=False,
+        values = [None if pd.isna(v) else float(v) for v in y]
+        positions = ["top center", "bottom center", "top right"]
+        fig.add_trace(go.Scatter(name=name, x=x, y=values,
+                                mode="lines+markers+text", connectgaps=False,
+                                text=["" if v is None else f"{v / 1e8:,.1f}억" for v in values],
+                                texttemplate="%{text}", textposition=positions[len(fig.data) % len(positions)],
+                                textfont=dict(size=10, color=color), cliponaxis=False,
                                 line=dict(color=color, width=2.5, dash=dash), marker=dict(size=7),
                                 hovertemplate="%{x}<br>%{y:,.0f}원<extra>%{fullData.name}</extra>"))
 
@@ -189,6 +194,12 @@ def render_business_plan(root: Path):
                           yaxis_title="성장률" if percent_axis else "매출 (원)",
                           yaxis_tickformat=".0%" if percent_axis else ",.0f",
                           xaxis=dict(type="category"), template="plotly_white")
+        if not percent_axis:
+            values = [v for trace in fig.data for v in trace.y if v is not None]
+            if values:
+                low, high = min(0, min(values)), max(0, max(values))
+                padding = (high - low) * 0.18 or 1
+                fig.update_yaxes(range=[low - padding, high + padding])
         st.plotly_chart(fig, width="stretch", key=key)
 
     latest_year = info["latest_year"]
@@ -262,9 +273,13 @@ def render_business_plan(root: Path):
     eligible = table[table["누적 목표"].gt(0) & table["목표 대비 차액"].lt(0)].head(8)
     if not eligible.empty:
         fig = go.Figure(go.Bar(y=eligible["매장"][::-1], x=-eligible["목표 대비 차액"][::-1], orientation="h",
-                              marker_color="#f59e0b", hovertemplate="%{y}<br>부족액 %{x:,.0f}원<extra></extra>"))
+                              marker_color="#f59e0b",
+                              text=[f"{v / 1e8:,.1f}억" for v in -eligible["목표 대비 차액"][::-1]],
+                              texttemplate="%{text}", textposition="outside", cliponaxis=False,
+                              hovertemplate="%{y}<br>부족액 %{x:,.0f}원<extra></extra>"))
         fig.update_layout(title="누적 목표 미달 금액 · 상위 8개 매장", height=max(300, len(eligible) * 38 + 90),
-                          xaxis=dict(title="목표까지 부족한 금액 (원)", tickformat=",.0f"),
+                          xaxis=dict(title="목표까지 부족한 금액 (원)", tickformat=",.0f",
+                                     range=[0, float(-eligible["목표 대비 차액"].min()) * 1.22]),
                           margin=dict(l=10, r=20, t=60, b=30), template="plotly_white")
         st.plotly_chart(fig, width="stretch", key="bp_store_gap_chart")
 
