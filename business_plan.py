@@ -162,18 +162,16 @@ def render_business_plan(root: Path):
     stats = summarize(frame, year, close, stores)
     money = lambda x: "자료 없음" if x is None or pd.isna(x) else f"{x / 1e8:,.2f}억 원"
     percent = lambda x: "비교 기준 없음" if x is None or pd.isna(x) else f"{x:.1%}"
-    annual_rate_label = "연간 목표 달성률 (현재 실적)"
     period_rate_label = f"1~{close}월 목표 달성률"
-    cards = st.columns(3) + st.columns(3)
+    cards = st.columns(3) + st.columns(2)
     for col, label, value, help_text in zip(cards,
-        ["연간 목표", "마감 누적 매출", f"1~{close}월 목표", annual_rate_label, period_rate_label, "전년 동기 성장률"],
-        [money(stats["annual"]), money(stats["actual"]), money(stats["target"]), percent(stats["progress"]), percent(stats["attainment"]), percent(stats["growth"])],
+        ["연간 목표", "마감 누적 매출", f"1~{close}월 목표", period_rate_label, "전년 동기 성장률"],
+        [money(stats["annual"]), money(stats["actual"]), money(stats["target"]), percent(stats["attainment"]), percent(stats["growth"])],
         ["1~12월 사업계획 합계", f"1~{close}월 마감 실적 합계", f"1~{close}월 사업계획 합계",
-         "지금까지의 실적으로 1년 전체 목표를 얼마나 채웠는지 보여줍니다. 연말 예상치는 포함하지 않습니다.",
          f"1~{close}월 실적을 같은 기간 목표와 비교합니다. 현재 계획대로 진행 중인지 보는 지표입니다.",
          f"1~{close}월 실적 ÷ 전년 1~{close}월 실적 − 1"]):
         col.metric(label, value, help=help_text)
-    st.caption(f"연간 목표 달성률 = 현재 실적 ÷ 1~12월 목표 · 1~{close}월 목표 달성률 = 현재 실적 ÷ 1~{close}월 목표")
+    st.caption(f"1~{close}월 목표 달성률 = 현재 실적 ÷ 1~{close}월 목표")
     st.caption(f"1~{close}월 누적 목표 {money(stats['target'])} · 목표 대비 차액 {money(stats['gap'])} · 전년 동기 매출 {money(stats['previous'])}")
     if stats["annual"] is None:
         st.info(f"{year}년의 연간 목표 자료가 없어 목표 달성률은 표시하지 않습니다. 매출 추이와 전년 동기 성장률은 확인할 수 있습니다.")
@@ -211,41 +209,6 @@ def render_business_plan(root: Path):
                         period_rate_label: same["attainment"] if available else None})
     hist = pd.DataFrame(history)
     st.divider()
-    fig = go.Figure()
-    line(fig, "연간 실제 매출", hist["연도"].astype(str), hist["연간 실적"], "#2563eb")
-    if latest_close < 12:
-        previous_annual = hist[hist["연도"].eq(latest_year - 1)]["연간 실적"]
-        anchor = previous_annual.iloc[0] if len(previous_annual) else None
-        line(fig, f"{latest_year}년 연말 예상", [str(latest_year - 1), str(latest_year)],
-             [anchor, latest_outlook["expected"]], "#16a34a", "dot")
-    line(fig, "연간 사업계획", hist["연도"].astype(str), hist["연간 목표"], "#f59e0b", "dash")
-    show(fig, "bp_year_chart", "연도별 사업계획 · 연간 매출 · 올해 연말 예상")
-    if latest_close < 12:
-        projection_cards = st.columns(3)
-        projection_cards[0].metric(f"{latest_year}년 연말 예상 매출", money(latest_outlook["expected"]))
-        projection_cards[1].metric("연말 예상 목표 달성률", percent(latest_outlook["attainment"]))
-        projection_cards[2].metric("연말 예상 전년 대비 성장률", percent(latest_outlook["growth"]))
-        closed_amount = complete_sum(monthly(frame, latest_year, "실적", stores).loc[:latest_close])
-        st.caption(f"{latest_year}년 예상 = 1~{latest_close}월 실적 {money(closed_amount)} + "
-                   f"{latest_close+1}~12월 사업계획 {money(latest_outlook['remaining'])}. 남은 기간 목표를 100% 달성한다고 가정한 금액입니다.")
-        if latest_outlook["expected"] is None:
-            st.info("마감 실적 또는 남은 월의 목표가 없어 연말 예상 매출을 계산할 수 없습니다.")
-    target_years = sorted(frame.loc[frame["구분"].eq("목표"), "연도"].unique())
-    st.caption("과거 연도는 1~12월 실제 매출과 해당 연도 목표를 비교합니다. "
-               "목표 자료가 있는 연도: " + ", ".join(f"{y}년" for y in target_years) + ". 목표가 없는 연도는 목표선을 표시하지 않습니다.")
-
-    st.markdown(f"#### 전년 동기 비교 · 각 연도 1~{close}월")
-    fig = go.Figure()
-    line(fig, f"1~{close}월 실제 매출", hist["연도"].astype(str), hist[f"1~{close}월 실적"], "#2563eb")
-    show(fig, "bp_growth_chart", f"연도별 같은 기간 매출 추이 · 1~{close}월", height=330)
-    for offset in range(0, len(hist), 4):
-        growth_cards = st.columns(4)
-        for col, (_, row) in zip(growth_cards, hist.iloc[offset:offset+4].iterrows()):
-            rate = row["전년 동기 성장률"]
-            col.metric(f"{int(row['연도'])}년 성장률", "비교 기준 없음" if pd.isna(rate) else f"{rate:+.1%}",
-                       help=f"{int(row['연도'])}년 1~{close}월 매출 ÷ {int(row['연도'])-1}년 같은 기간 매출 − 1")
-    st.caption("꺾은선의 세로축은 실제 매출 금액입니다. 박스는 직전 연도의 같은 기간 대비 성장률이며, 연말 예상 매출을 포함하지 않습니다.")
-
     actual = monthly(frame, year, "실적", stores)
     target = monthly(frame, year, "목표", stores)
     previous = monthly(frame, year - 1, "실적", stores)
@@ -265,13 +228,35 @@ def render_business_plan(root: Path):
         line(fig, "전년 누적 실적", labels, previous.cumsum(skipna=False), "#94a3b8", "dot")
         show(fig, "bp_cumulative_chart", "누적 목표 대비 진행 현황")
 
+    if latest_close < 12:
+        projection_cards = st.columns(3)
+        projection_cards[0].metric(f"{latest_year}년 연말 예상 매출", money(latest_outlook["expected"]))
+        projection_cards[1].metric("연말 예상 목표 달성률", percent(latest_outlook["attainment"]))
+        projection_cards[2].metric("연말 예상 전년 대비 성장률", percent(latest_outlook["growth"]))
+        closed_amount = complete_sum(monthly(frame, latest_year, "실적", stores).loc[:latest_close])
+        st.caption(f"{latest_year}년 예상 = 1–{latest_close}월 실적 {money(closed_amount)} + "
+                   f"{latest_close+1}–12월 사업계획 {money(latest_outlook['remaining'])}. 남은 기간 목표를 100% 달성한다고 가정한 금액입니다.")
+        if latest_outlook["expected"] is None:
+            st.info("마감 실적 또는 남은 월의 목표가 없어 연말 예상 매출을 계산할 수 없습니다.")
+    st.markdown(f"#### 전년 동기 비교 · 각 연도 1~{close}월")
+    fig = go.Figure()
+    line(fig, f"1~{close}월 실제 매출", hist["연도"].astype(str), hist[f"1~{close}월 실적"], "#2563eb")
+    show(fig, "bp_growth_chart", f"연도별 같은 기간 매출 추이 · 1~{close}월", height=330)
+    for offset in range(0, len(hist), 4):
+        growth_cards = st.columns(4)
+        for col, (_, row) in zip(growth_cards, hist.iloc[offset:offset+4].iterrows()):
+            rate = row["전년 동기 성장률"]
+            col.metric(f"{int(row['연도'])}년 성장률", "비교 기준 없음" if pd.isna(rate) else f"{rate:+.1%}",
+                       help=f"{int(row['연도'])}년 1~{close}월 매출 ÷ {int(row['연도'])-1}년 같은 기간 매출 − 1")
+    st.caption("꺾은선의 세로축은 실제 매출 금액입니다. 박스는 직전 연도의 같은 기간 대비 성장률이며, 연말 예상 매출을 포함하지 않습니다.")
+
     st.markdown("#### 매장별 달성 현황")
     store_rows = []
     for store in stores:
         s = summarize(frame, year, close, [store])
         store_rows.append({"매장": store, "연간 목표": s["annual"], "누적 목표": s["target"],
                            "누적 실적": s["actual"], "목표 대비 차액": s["gap"],
-                           period_rate_label: s["attainment"], annual_rate_label: s["progress"],
+                           period_rate_label: s["attainment"],
                            "전년 동기 성장률": s["growth"]})
     table = pd.DataFrame(store_rows).sort_values("목표 대비 차액", na_position="last")
     eligible = table[table["누적 목표"].gt(0) & table["목표 대비 차액"].lt(0)].head(8)
@@ -308,8 +293,7 @@ def render_business_plan(root: Path):
     with st.expander("계산 기준"):
         if info["mismatches"]:
             st.write("원본 합계와 매장 합산 차이: " + ", ".join(info["mismatches"]))
-        st.markdown("- 연간 목표 달성률 (현재 실적) = 마감 누적 실적 ÷ 1~12월 목표\n"
-                    "- 마감 기간 목표 달성률 = 마감 누적 실적 ÷ 같은 기간 목표\n"
+        st.markdown("- 마감 기간 목표 달성률 = 마감 누적 실적 ÷ 같은 기간 목표\n"
                     "- 연말 예상 매출 = 마감 월까지 실제 매출 + 남은 월의 사업계획\n"
                     "- 연말 예상 목표 달성률 = 연말 예상 매출 ÷ 연간 목표\n"
                     "- 전년 동기 성장률 = 마감 누적 실적 ÷ 전년 같은 기간 실적 − 1\n"
