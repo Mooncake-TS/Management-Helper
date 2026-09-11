@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_loader import load_dashboard_data
+from business_plan import render_business_plan
 from forecasting import calculate_order_recommendation, calculate_ytd_growth
 
 
@@ -1301,7 +1302,7 @@ def render_store_tab(
 
 
 st.title("테마상품 매입·매출 대시보드")
-st.caption("ERP에서 내려받은 엑셀 3개를 수정하지 않고 읽기 전용으로 분석합니다.")
+st.caption("ERP 매입·매출과 사업계획 엑셀을 읽기 전용으로 분석합니다.")
 
 with st.sidebar:
     st.header("데이터 연결")
@@ -1440,9 +1441,12 @@ previous_purchase_amount = float(previous_purchase[amount_col].fillna(0).sum())
 average_price = sales_amount / sales_qty if sales_qty else 0
 previous_average_price = previous_sales_amount / previous_sales_qty if previous_sales_qty else 0
 
-overview_tab, detail_tab, store_tab, forecast_tab, quality_tab = st.tabs(
-    ["전체 현황", "월 상세", "매장별", "예측 발주", "데이터 상태"]
+overview_tab, detail_tab, store_tab, plan_tab, forecast_tab, quality_tab = st.tabs(
+    ["전체 현황", "월 상세", "매장별", "사업계획 분석", "예측 발주", "데이터 상태"]
 )
+
+with plan_tab:
+    render_business_plan(Path(__file__).resolve().parent)
 
 with overview_tab:
     sales_metric_columns = st.columns(3)
@@ -2263,4 +2267,3 @@ with quality_tab:
 st.caption(
     "음수 수량은 반품으로 포함됩니다. 금액 기준은 왼쪽에서 합계 또는 공급가액으로 바꿀 수 있습니다."
 )
-
