@@ -187,7 +187,50 @@ def render_business_plan(root: Path):
                                 line=dict(color=color, width=2.5, dash=dash), marker=dict(size=7),
                                 hovertemplate="%{x}<br>%{y:,.0f}원<extra>%{fullData.name}</extra>"))
 
+    def separate_point_labels(fig, low, high, plot_height=390):
+        """Place labels in free space and connect them to their data points."""
+        plot_width = 300  # Conservative width for the two-column layout.
+        occupied = []
+        points = []
+        for series, trace in enumerate(fig.data):
+            trace.update(mode="lines+markers", text=None)
+            for month, (x, value) in enumerate(zip(trace.x, trace.y)):
+                if value is not None:
+                    points.append((month, series, x, value, trace.line.color))
+        for month, series, x, value, color in sorted(points):
+            px = (month + 0.5) * plot_width / 12
+            py = (high - value) / (high - low) * plot_height
+            preferred = -1 if series == 0 else 1
+            candidates = []
+            for distance in range(28, 281, 22):
+                for direction in (preferred, -preferred):
+                    for dx in (0, -14, 14):
+                        dy = direction * distance
+                        cx, cy = px + dx, py + dy
+                        box = (cx - 22, cy - 11, cx + 22, cy + 11)
+                        if cy < 12 or cy > plot_height - 12:
+                            continue
+                        overlap = sum(
+                            max(0, min(box[2], b[2]) - max(box[0], b[0])) *
+                            max(0, min(box[3], b[3]) - max(box[1], b[1]))
+                            for b in occupied
+                        )
+                        candidates.append((overlap, distance + abs(dx) * 0.2, dx, dy, box))
+            _, _, dx, dy, box = min(candidates, key=lambda c: (c[0], c[1]))
+            occupied.append(box)
+            fig.add_annotation(
+                x=x, y=value, xref="x", yref="y",
+                text=f"{value / 1e8:,.1f}억",
+                showarrow=True, arrowhead=0, arrowwidth=1, arrowcolor=color,
+                ax=dx, ay=dy, axref="pixel", ayref="pixel",
+                font=dict(size=10, color=color), bgcolor="rgba(255,255,255,0.94)",
+                borderpad=2, xanchor="center", yanchor="middle",
+            )
+
     def show(fig, key, title, percent_axis=False, height=390):
+        separate_labels = key in {"bp_month_chart", "bp_cumulative_chart"}
+        if separate_labels:
+            height = 560
         fig.update_layout(title=dict(text=title, font=dict(size=17)), height=height,
                           margin=dict(l=10, r=15, t=65, b=85),
                           legend=dict(orientation="h", y=-0.2, x=0), hovermode="x unified",
@@ -200,6 +243,8 @@ def render_business_plan(root: Path):
                 low, high = min(0, min(values)), max(0, max(values))
                 padding = (high - low) * 0.18 or 1
                 fig.update_yaxes(range=[low - padding, high + padding])
+                if separate_labels:
+                    separate_point_labels(fig, low - padding, high + padding, height - 150)
         st.plotly_chart(fig, width="stretch", key=key)
 
     latest_year = info["latest_year"]
