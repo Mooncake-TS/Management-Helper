@@ -394,23 +394,121 @@ def item_comparison(
     return merged.sort_values("금년 금액", ascending=False)
 
 
+def render_category_composition(category_detail, current_amount, base_year, period_label, key_prefix):
+    composition = category_detail[category_detail["금년 금액"].gt(0)].copy()
+    palette = [
+        "#2563EB", "#06B6D4", "#14B8A6", "#10B981", "#84CC16",
+        "#F59E0B", "#F97316", "#EF4444", "#EC4899", "#8B5CF6",
+        "#6366F1", "#64748B", "#0EA5E9", "#A855F7",
+    ]
+
+    composition_column, comparison_column = st.columns([1, 1.2])
+    with composition_column:
+        pie_fig = go.Figure(
+            go.Pie(
+                labels=composition["유형"],
+                values=composition["금년 금액"],
+                hole=0.43,
+                sort=False,
+                marker=dict(colors=palette[: len(composition)]),
+                textinfo="label+percent",
+                textposition="auto",
+                customdata=composition[["금년 수량", "금년 평균단가"]],
+                hovertemplate=(
+                    "%{label}<br>매출액 %{value:,.0f}원"
+                    "<br>구성비 %{percent}<br>판매수량 %{customdata[0]:,.0f}개"
+                    "<br>평균단가 %{customdata[1]:,.0f}원<extra></extra>"
+                ),
+            )
+        )
+        pie_fig.update_layout(
+            title=f"금년 {period_label} 매출 구성",
+            height=500,
+            margin=dict(l=10, r=10, t=60, b=25),
+            legend=dict(orientation="h", yanchor="top", y=-0.05),
+            annotations=[
+                dict(
+                    text=f"{period_label} 매출<br><b>{format_money(current_amount)}</b>",
+                    x=0.5,
+                    y=0.5,
+                    showarrow=False,
+                    font=dict(size=16, color="#0F172A"),
+                )
+            ],
+        )
+        render_plotly_chart(
+            pie_fig,
+            width="stretch",
+            key=f"{key_prefix}_composition",
+        )
+
+    with comparison_column:
+        comparison_data = category_detail.copy()
+        comparison_data["비교 크기"] = comparison_data[
+            ["금년 금액", "전년 금액"]
+        ].max(axis=1)
+        comparison_data = comparison_data.sort_values("비교 크기")
+        comparison_fig = go.Figure()
+        comparison_fig.add_trace(
+            go.Bar(
+                x=comparison_data["전년 금액"],
+                y=comparison_data["유형"],
+                name=str(base_year - 1),
+                orientation="h",
+                marker_color="#BAE6FD",
+                hovertemplate="%{y}<br>전년 %{x:,.0f}원<extra></extra>",
+            )
+        )
+        comparison_fig.add_trace(
+            go.Bar(
+                x=comparison_data["금년 금액"],
+                y=comparison_data["유형"],
+                name=str(base_year),
+                orientation="h",
+                marker_color="#2563EB",
+                hovertemplate="%{y}<br>금년 %{x:,.0f}원<extra></extra>",
+            )
+        )
+        comparison_fig.update_layout(
+            title="상품 유형별 매출액 전년 비교",
+            height=500,
+            margin=dict(l=10, r=10, t=60, b=25),
+            barmode="group",
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+            ),
+            xaxis_title="매출액(원)",
+            yaxis_title=None,
+            xaxis_tickformat=",.0f",
+            xaxis_separatethousands=True,
+        )
+        render_plotly_chart(
+            comparison_fig,
+            width="stretch",
+            key=f"{key_prefix}_amount_yoy",
+        )
+
+
+
 def category_month_comparison(
     frame: pd.DataFrame,
     year: int,
-    month: int,
+    month: int | tuple[int, int],
     amount_col: str,
 ) -> pd.DataFrame:
     working = frame.copy()
+    start_month, end_month = month if isinstance(month, tuple) else (month, month)
+    period_mask = working["월"].between(start_month, end_month)
     working["유형"] = working["유형"].fillna("기타용품").replace("", "기타용품")
 
     current = (
-        working[working["연도"].eq(year) & working["월"].eq(month)]
+        working[working["연도"].eq(year) & period_mask]
         .groupby("유형", observed=True)[["수량", amount_col]]
         .sum()
         .rename(columns={"수량": "금년 수량", amount_col: "금년 금액"})
     )
     previous = (
-        working[working["연도"].eq(year - 1) & working["월"].eq(month)]
+        working[working["연도"].eq(year - 1) & period_mask]
         .groupby("유형", observed=True)[["수량", amount_col]]
         .sum()
         .rename(columns={"수량": "전년 수량", amount_col: "전년 금액"})
@@ -1559,6 +1657,28 @@ with overview_tab:
         f"현재 선택: {base_year}년 {selected_from_chart}월"
     )
 
+    st.divider()
+    overview_period = (
+        f"{month_range[0]}월" if month_range[0] == month_range[1]
+        else f"{month_range[0]}–{month_range[1]}월"
+    )
+    st.markdown(f"#### {base_year}년 {overview_period} 전체 매장 상품 유형별 매출 구성")
+    st.caption(
+        f"모든 매장의 {overview_period} 매출을 합산하고 전년 같은 기간과 비교합니다. "
+        "왼쪽의 조회 월·상품 유형·품목·금액 기준을 적용합니다."
+    )
+    overview_categories = category_month_comparison(
+        sales_view, base_year, tuple(month_range), amount_col
+    )
+    if overview_categories.empty:
+        st.info("선택한 기간에는 상품 유형별 매출 구성을 계산할 데이터가 없습니다.")
+    else:
+        render_category_composition(
+            overview_categories, sales_amount, base_year, overview_period,
+            f"category_overview_{base_year}_{month_range[0]}_{month_range[1]}",
+        )
+
+
 with detail_tab:
     detail_default = int(st.session_state.get("chart_selected_month", month_range[1]))
     detail_month = st.selectbox(
@@ -1629,98 +1749,8 @@ with detail_tab:
     if category_detail.empty or current_amount == 0:
         st.info("선택한 월에는 상품 유형별 매출 구성을 계산할 데이터가 없습니다.")
     else:
-        composition = category_detail[category_detail["금년 금액"].gt(0)].copy()
-        palette = [
-            "#2563EB", "#06B6D4", "#14B8A6", "#10B981", "#84CC16",
-            "#F59E0B", "#F97316", "#EF4444", "#EC4899", "#8B5CF6",
-            "#6366F1", "#64748B", "#0EA5E9", "#A855F7",
-        ]
-
-        composition_column, comparison_column = st.columns([1, 1.2])
-        with composition_column:
-            pie_fig = go.Figure(
-                go.Pie(
-                    labels=composition["유형"],
-                    values=composition["금년 금액"],
-                    hole=0.43,
-                    sort=False,
-                    marker=dict(colors=palette[: len(composition)]),
-                    textinfo="label+percent",
-                    textposition="auto",
-                    customdata=composition[["금년 수량", "금년 평균단가"]],
-                    hovertemplate=(
-                        "%{label}<br>매출액 %{value:,.0f}원"
-                        "<br>구성비 %{percent}<br>판매수량 %{customdata[0]:,.0f}개"
-                        "<br>평균단가 %{customdata[1]:,.0f}원<extra></extra>"
-                    ),
-                )
-            )
-            pie_fig.update_layout(
-                title="금년 월 매출 구성",
-                height=500,
-                margin=dict(l=10, r=10, t=60, b=25),
-                legend=dict(orientation="h", yanchor="top", y=-0.05),
-                annotations=[
-                    dict(
-                        text=f"월 매출<br><b>{format_money(current_amount)}</b>",
-                        x=0.5,
-                        y=0.5,
-                        showarrow=False,
-                        font=dict(size=16, color="#0F172A"),
-                    )
-                ],
-            )
-            render_plotly_chart(
-                pie_fig,
-                width="stretch",
-                key=f"category_composition_{base_year}_{detail_month}",
-            )
-
-        with comparison_column:
-            comparison_data = category_detail.copy()
-            comparison_data["비교 크기"] = comparison_data[
-                ["금년 금액", "전년 금액"]
-            ].max(axis=1)
-            comparison_data = comparison_data.sort_values("비교 크기")
-            comparison_fig = go.Figure()
-            comparison_fig.add_trace(
-                go.Bar(
-                    x=comparison_data["전년 금액"],
-                    y=comparison_data["유형"],
-                    name=str(base_year - 1),
-                    orientation="h",
-                    marker_color="#BAE6FD",
-                    hovertemplate="%{y}<br>전년 %{x:,.0f}원<extra></extra>",
-                )
-            )
-            comparison_fig.add_trace(
-                go.Bar(
-                    x=comparison_data["금년 금액"],
-                    y=comparison_data["유형"],
-                    name=str(base_year),
-                    orientation="h",
-                    marker_color="#2563EB",
-                    hovertemplate="%{y}<br>금년 %{x:,.0f}원<extra></extra>",
-                )
-            )
-            comparison_fig.update_layout(
-                title="상품 유형별 매출액 전년 비교",
-                height=500,
-                margin=dict(l=10, r=10, t=60, b=25),
-                barmode="group",
-                legend=dict(
-                    orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-                ),
-                xaxis_title="매출액(원)",
-                yaxis_title=None,
-                xaxis_tickformat=",.0f",
-                xaxis_separatethousands=True,
-            )
-            render_plotly_chart(
-                comparison_fig,
-                width="stretch",
-                key=f"category_amount_yoy_{base_year}_{detail_month}",
-            )
+        render_category_composition(category_detail, current_amount, base_year, "월",
+                                    f"category_month_{base_year}_{detail_month}")
 
         top_category = category_detail.iloc[0]
         top_three_share = float(category_detail.head(3)["금년 구성비"].sum())
