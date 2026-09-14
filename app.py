@@ -394,6 +394,42 @@ def item_comparison(
     return merged.sort_values("금년 금액", ascending=False)
 
 
+def render_category_detail_table(category_data, key):
+    category_display = category_data[
+        [
+            "유형", "금년 금액", "금년 구성비", "전년 금액", "전년 구성비",
+            "금액 변화량", "금액 변화율", "구성비 변화", "금년 수량",
+            "전년 수량", "금년 평균단가", "전년 평균단가", "평균단가 변화율",
+        ]
+    ].copy()
+    for percent_column in [
+        "금년 구성비", "전년 구성비", "금액 변화율", "구성비 변화", "평균단가 변화율"
+    ]:
+        category_display[percent_column] = category_display[percent_column] * 100
+    st.dataframe(
+        category_display,
+        key=key,
+        width="stretch",
+        hide_index=True,
+        height=min(560, 84 + len(category_display) * 35),
+        column_config={
+            "유형": st.column_config.TextColumn("상품 유형", width="medium"),
+            "금년 금액": st.column_config.NumberColumn("금년 매출", format="%,.0f원"),
+            "금년 구성비": st.column_config.NumberColumn("금년 구성비", format="%.1f%%"),
+            "전년 금액": st.column_config.NumberColumn("전년 매출", format="%,.0f원"),
+            "전년 구성비": st.column_config.NumberColumn("전년 구성비", format="%.1f%%"),
+            "금액 변화량": st.column_config.NumberColumn("매출 증감", format="%,.0f원"),
+            "금액 변화율": st.column_config.NumberColumn("매출 변화율", format="%.1f%%"),
+            "구성비 변화": st.column_config.NumberColumn("구성비 증감", format="%.1f%%p"),
+            "금년 수량": st.column_config.NumberColumn(format="%,.0f개"),
+            "전년 수량": st.column_config.NumberColumn(format="%,.0f개"),
+            "금년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
+            "전년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
+            "평균단가 변화율": st.column_config.NumberColumn(format="%.1f%%"),
+        },
+    )
+
+
 def render_category_composition(category_detail, current_amount, base_year, period_label, key_prefix):
     composition = category_detail[category_detail["금년 금액"].gt(0)].copy()
     palette = [
@@ -1717,6 +1753,10 @@ with overview_tab:
         )
 
 
+        st.markdown("#### 상품 유형별 상세 비교표")
+        st.caption(f"전체 매장 {overview_period} 기준 · 금액 단위: 원 · 구성비 증감 단위: %p")
+        render_category_detail_table(overview_categories, "overview_category_detail_table")
+
 with detail_tab:
     detail_default = int(st.session_state.get("chart_selected_month", month_range[1]))
     detail_month = st.selectbox(
@@ -1885,38 +1925,7 @@ with detail_tab:
         )
 
         st.markdown("#### 상품 유형별 상세 비교표")
-        category_display = category_detail[
-            [
-                "유형", "금년 금액", "금년 구성비", "전년 금액", "전년 구성비",
-                "금액 변화량", "금액 변화율", "구성비 변화", "금년 수량",
-                "전년 수량", "금년 평균단가", "전년 평균단가", "평균단가 변화율",
-            ]
-        ].copy()
-        for percent_column in [
-            "금년 구성비", "전년 구성비", "금액 변화율", "구성비 변화", "평균단가 변화율"
-        ]:
-            category_display[percent_column] = category_display[percent_column] * 100
-        st.dataframe(
-            category_display,
-            width="stretch",
-            hide_index=True,
-            height=min(560, 84 + len(category_display) * 35),
-            column_config={
-                "유형": st.column_config.TextColumn("상품 유형", width="medium"),
-                "금년 금액": st.column_config.NumberColumn("금년 매출", format="%,.0f원"),
-                "금년 구성비": st.column_config.NumberColumn("금년 구성비", format="%.1f%%"),
-                "전년 금액": st.column_config.NumberColumn("전년 매출", format="%,.0f원"),
-                "전년 구성비": st.column_config.NumberColumn("전년 구성비", format="%.1f%%"),
-                "금액 변화량": st.column_config.NumberColumn("매출 증감", format="%,.0f원"),
-                "금액 변화율": st.column_config.NumberColumn("매출 변화율", format="%.1f%%"),
-                "구성비 변화": st.column_config.NumberColumn("구성비 증감", format="%.1f%%p"),
-                "금년 수량": st.column_config.NumberColumn(format="%,.0f개"),
-                "전년 수량": st.column_config.NumberColumn(format="%,.0f개"),
-                "금년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
-                "전년 평균단가": st.column_config.NumberColumn(format="%,.0f원"),
-                "평균단가 변화율": st.column_config.NumberColumn(format="%.1f%%"),
-            },
-        )
+        render_category_detail_table(category_detail, "monthly_category_detail_table")
 
 with store_tab:
     render_store_tab(sales, base_year, month_range, selected_categories, sku_filter, amount_col)
