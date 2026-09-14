@@ -1679,6 +1679,44 @@ with overview_tab:
         )
 
 
+        st.markdown("#### 상품 유형별 매출 증감 기여도")
+        st.caption(f"전체 매장 {overview_period} 기준 · 초록색은 증가, 빨간색은 감소입니다. 유형별 증감액을 합하면 전체 매출 증감액이 됩니다.")
+        contribution = overview_categories.sort_values("금액 변화량")
+        contribution["변화율 표시"] = contribution["금액 변화율"].map(
+            lambda value: "비교 기준 없음" if pd.isna(value) else f"{value:+.1%}"
+        )
+        contribution_fig = go.Figure(
+            go.Bar(
+                x=contribution["금액 변화량"],
+                y=contribution["유형"],
+                orientation="h",
+                marker_color=[
+                    "#10B981" if value >= 0 else "#EF4444"
+                    for value in contribution["금액 변화량"]
+                ],
+                customdata=contribution["변화율 표시"],
+                hovertemplate=(
+                    "%{y}<br>매출 증감 %{x:,.0f}원"
+                    "<br>변화율 %{customdata}<extra></extra>"
+                ),
+            )
+        )
+        contribution_fig.add_vline(x=0, line_color="#94A3B8", line_width=1)
+        contribution_fig.update_layout(
+            height=max(390, 135 + len(contribution) * 30),
+            margin=dict(l=10, r=10, t=20, b=25),
+            xaxis_title="전년 동기 대비 매출 증감액(원)",
+            yaxis_title=None,
+            xaxis_tickformat=",.0f",
+            xaxis_separatethousands=True,
+        )
+        render_plotly_chart(
+            contribution_fig,
+            width="stretch",
+            key=f"overview_contribution_{base_year}_{month_range[0]}_{month_range[1]}",
+        )
+
+
 with detail_tab:
     detail_default = int(st.session_state.get("chart_selected_month", month_range[1]))
     detail_month = st.selectbox(
