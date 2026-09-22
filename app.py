@@ -1305,11 +1305,12 @@ def add_store_last_month_labels(fig: go.Figure, last_month: int, money: bool) ->
         fig.add_annotation(
             x=f"{last_month}월", y=value, text=f"{trace.name} · {label}",
             showarrow=True, arrowhead=0, arrowwidth=1, arrowcolor=trace.line.color,
-            ax=55, ay=-offset, xanchor="left",
+            ax=-12, ay=-offset, xanchor="right",
             bgcolor="rgba(255,255,255,0.94)", borderpad=3,
             font=dict(size=12, color=trace.line.color),
         )
-    fig.update_layout(margin=dict(r=165))
+    fig.update_layout(margin=dict(r=25))
+    fig.update_xaxes(tickmode="array", tickvals=list(fig.data[0].x), tickangle=0)
 
 
 def render_store_summary_tab(
