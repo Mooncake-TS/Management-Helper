@@ -1361,9 +1361,21 @@ async function chartImage(fig,width,height){
   if(!fig)return null;
   const node=document.getElementById('plot');
   const layout={...fig.layout,width,height,autosize:false,paper_bgcolor:'white',plot_bgcolor:'white',
-    font:{...(fig.layout.font||{}),family:font,color:'#334155'}};
+    font:{...(fig.layout.font||{}),family:font,color:'#334155',size:20},
+    title:{...fig.layout.title,font:{...(fig.layout.title?.font||{}),size:24}},
+    legend:{...fig.layout.legend,font:{...(fig.layout.legend?.font||{}),size:18}},
+    margin:{...fig.layout.margin,t:100,b:110},
+    annotations:(fig.layout.annotations||[]).map(a=>({...a,font:{...a.font,size:18}}))};
+  for(const axis of ['xaxis','yaxis']){
+    layout[axis]={...fig.layout[axis],tickfont:{size:17},
+      title:{...fig.layout[axis]?.title,font:{size:20}},automargin:true};
+  }
+  const data=fig.data.map(trace=>({...trace,
+    textfont:{...trace.textfont,size:trace.type==='pie'?20:17},
+    insidetextfont:{...trace.insidetextfont,size:20},
+    outsidetextfont:{...trace.outsidetextfont,size:17}}));
   try{
-    await Plotly.newPlot(node,fig.data,layout,{staticPlot:true,displayModeBar:false});
+    await Plotly.newPlot(node,data,layout,{staticPlot:true,displayModeBar:false});
     const url=await Plotly.toImage(node,{format:'png',width,height,scale:2});
     const img=new Image();img.src=url;await img.decode();return img;
   }finally{Plotly.purge(node);}
@@ -1374,25 +1386,23 @@ button.onclick=async()=>{
   try{
     await document.fonts.ready;
     const W=1600, pad=48, gap=24, half=(W-pad*2-gap)/2;
-    const trendH=460, categoryH=Math.max(540,...report.figures.slice(2,4).map(f=>f?.layout?.height||0));
-    const contributionH=Math.max(460,report.figures[4].layout.height||0);
+    const trendH=500, categoryH=Math.max(640,...report.figures.slice(2,4).map(f=>f?.layout?.height||0));
+    const contributionH=Math.max(540,report.figures[4].layout.height||0);
     const canvas=document.createElement('canvas');
-    // Reserve header space based on actual wrapped filter text, including long product names.
-    const measure=canvas.getContext('2d');measure.font='18px '+font;
-    let lines=1,line='';for(const char of report.subtitle){if(measure.measureText(line+char).width>W-2*pad){lines++;line='';}line+=char;}
-    const headerH=160+lines*26, metricsH=150;
-    const H=headerH+metricsH+trendH+categoryH+contributionH+220;
+    const measure=canvas.getContext('2d');measure.font='bold 44px '+font;
+    let lines=1,line='';for(const char of report.title){if(measure.measureText(line+char).width>W-2*pad){lines++;line='';}line+=char;}
+    const headerH=65+lines*54, metricsH=180;
+    const H=headerH+metricsH+trendH+categoryH+contributionH+200;
     canvas.width=W*2;canvas.height=H*2;
     const ctx=canvas.getContext('2d');ctx.scale(2,2);ctx.fillStyle='white';ctx.fillRect(0,0,W,H);
-    ctx.fillStyle='#0f172a';ctx.font='bold 34px '+font;ctx.fillText('매장 요약',pad,60);
-    ctx.font='bold 25px '+font;wrap(ctx,report.title,pad,105,W-pad*2,30);
-    ctx.fillStyle='#64748b';ctx.font='18px '+font;wrap(ctx,report.subtitle,pad,145,W-pad*2,26);
-    const cardW=(W-2*pad-3*gap)/4;
-    report.metrics.forEach((m,i)=>{
-      const x=pad+i*(cardW+gap);ctx.fillStyle='#f8fafc';ctx.fillRect(x,headerH,cardW,125);
-      ctx.fillStyle='#475569';ctx.font='17px '+font;ctx.fillText(m.label,x+18,headerH+30);
-      ctx.fillStyle='#0f172a';ctx.font='bold 29px '+font;ctx.fillText(m.value,x+18,headerH+72);
-      ctx.fillStyle='#64748b';ctx.font='16px '+font;ctx.fillText(m.delta||'',x+18,headerH+104);
+    ctx.fillStyle='#0f172a';ctx.font='bold 44px '+font;wrap(ctx,report.title,pad,70,W-pad*2,54);
+    const metrics=report.metrics.filter(m=>['매장 판매금액','매장 판매수량','평균 판매단가'].includes(m.label));
+    const cardW=(W-2*pad-(metrics.length-1)*gap)/metrics.length;
+    metrics.forEach((m,i)=>{
+      const x=pad+i*(cardW+gap);ctx.fillStyle='#f8fafc';ctx.fillRect(x,headerH,cardW,155);
+      ctx.fillStyle='#334155';ctx.font='24px '+font;ctx.fillText(m.label,x+24,headerH+36);
+      ctx.fillStyle='#0f172a';ctx.font='bold 40px '+font;ctx.fillText(m.value,x+24,headerH+89);
+      ctx.fillStyle='#334155';ctx.font='22px '+font;ctx.fillText(m.delta||'',x+24,headerH+130);
     });
     let y=headerH+metricsH;
     const sizes=[[half,trendH],[half,trendH],[half,categoryH],[half,categoryH],[W-2*pad,contributionH]];
@@ -1402,11 +1412,10 @@ button.onclick=async()=>{
       images.push(await chartImage(report.figures[i],...sizes[i]));
     }
     for(let i=0;i<2;i++)if(images[i])ctx.drawImage(images[i],pad+i*(half+gap),y,half,trendH);
-    y+=trendH+35;ctx.fillStyle='#0f172a';ctx.font='bold 23px '+font;ctx.fillText('상품 유형별 판매 구성 · 전년 동기 비교',pad,y);y+=20;
+    y+=trendH+35;ctx.fillStyle='#0f172a';ctx.font='bold 30px '+font;ctx.fillText('상품 유형별 판매 구성 · 전년 동기 비교',pad,y);y+=20;
     for(let i=2;i<4;i++)if(images[i])ctx.drawImage(images[i],pad+(i-2)*(half+gap),y,half,categoryH);
     if(!images[2]){ctx.font='18px '+font;ctx.fillText('양수인 순판매 실적이 없어 구성비를 표시할 수 없습니다.',pad,y+80);}
-    y+=categoryH+35;ctx.fillStyle='#64748b';ctx.font='16px '+font;ctx.fillText('도넛 구성비는 반품 차감 후 실적이 양수인 유형의 합계 기준입니다.',pad,y);
-    y+=45;ctx.fillStyle='#0f172a';ctx.font='bold 23px '+font;ctx.fillText('상품 유형별 매출 증감 기여',pad,y);y+=18;
+    y+=categoryH+55;ctx.fillStyle='#0f172a';ctx.font='bold 30px '+font;ctx.fillText('상품 유형별 매출 증감 기여',pad,y);y+=18;
     ctx.drawImage(images[4],pad,y,W-2*pad,contributionH);
     const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
     if(!blob)throw new Error('PNG 생성 실패');
