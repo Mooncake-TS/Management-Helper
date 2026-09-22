@@ -1295,6 +1295,106 @@ def render_store_table(summary: pd.DataFrame) -> None:
     st.dataframe(summary.style.format(formats, na_rep="—"), width="stretch", hide_index=True)
 
 
+def add_store_last_month_labels(fig: go.Figure, last_month: int, money: bool) -> None:
+    """Label the common final analysis month, offsetting nearby values."""
+    points = [(trace, float(trace.y[-1])) for trace in fig.data if len(trace.y)]
+    ordered = sorted(points, key=lambda point: point[1])
+    for index, (trace, value) in enumerate(ordered):
+        offset = (index - (len(ordered) - 1) / 2) * 38
+        label = f"{value / 100_000_000:.2f}억 원" if money else f"{value:,.0f}개"
+        fig.add_annotation(
+            x=f"{last_month}월", y=value, text=f"{trace.name} · {label}",
+            showarrow=True, arrowhead=0, arrowwidth=1, arrowcolor=trace.line.color,
+            ax=55, ay=-offset, xanchor="left",
+            bgcolor="rgba(255,255,255,0.94)", borderpad=3,
+            font=dict(size=12, color=trace.line.color),
+        )
+    fig.update_layout(margin=dict(r=165))
+
+
+def render_store_summary_tab(
+    sales: pd.DataFrame, year: int, months: tuple[int, int],
+    categories: list[str], sku_filter: set[str] | None, amount_col: str,
+) -> None:
+    st.caption("왼쪽의 기준 연도·조회 월·상품 유형·품목·금액 기준을 적용합니다. 매장을 선택해 핵심 실적을 확인하세요.")
+    view = filtered_for_years(sales, [year - 1, year], months, categories, sku_filter).copy()
+    view["매장명"] = view["창고명"].fillna("").astype(str).str.strip().replace("", "매장명 미입력")
+    if view.empty:
+        st.info("선택한 조회 조건에 해당하는 판매자료가 없습니다.")
+        return
+    summary = store_period_comparison(view, year, amount_col, ["매장명"])
+    st.subheader("매장 요약")
+    selected = st.selectbox("분석할 매장", summary["매장명"].tolist(), key="store_summary_detail_selection")
+    detail = view.loc[view["매장명"].eq(selected)]
+    row = summary.loc[summary["매장명"].eq(selected)].iloc[0]
+    cols = st.columns(4)
+    for col, metric, label in ((cols[0], "금액", "매장 판매금액"), (cols[1], "수량", "매장 판매수량")):
+        value = format_money(float(row[f"금년 {metric}"])) if metric == "금액" else f'{row["금년 수량"]:,.0f}개'
+        rate = row[f"{metric} 증감률"]
+        col.metric(label, value, "전년 비교 기준 없음" if pd.isna(rate) else f"{rate:+.1%} 전년 대비")
+    cols[2].metric("전체 판매금액 중 비중", f'{row["금년 구성비"]:.1%}' if pd.notna(row["금년 구성비"]) else "—")
+    asp = row["금년 금액"] / row["금년 수량"] if row["금년 수량"] > 0 else None
+    cols[3].metric("평균 판매단가", f"{asp:,.0f}원" if asp is not None else "—")
+
+    current_detail = detail.loc[detail["연도"].eq(year)]
+    if current_detail.empty:
+        st.info("선택한 조회 기간에 이 매장의 금년 판매자료가 없습니다.")
+        return
+    last_month = int(current_detail["월"].max())
+    chart_months = (months[0], last_month)
+    st.caption(f"월별 추이: {year}년 {months[0]}–{last_month}월 · 마지막 데이터 월: {last_month}월")
+    left, right = st.columns(2)
+    for container, value_col, label, money, chart_key in (
+        (left, amount_col, "판매금액", True, "store_summary_amount_monthly"),
+        (right, "수량", "판매수량", False, "store_summary_quantity_monthly"),
+    ):
+        with container:
+            fig = comparison_chart(
+                detail, year, value_col, f"{selected} · 월별 {label}", money, chart_months,
+            )
+            add_store_last_month_labels(fig, last_month, money)
+            render_plotly_chart(fig, width="stretch", key=chart_key)
+
+    month_detail = detail.loc[detail["월"].eq(last_month)]
+    period = f"{year}년 {last_month}월"
+    st.divider()
+    st.caption(f"아래 판매 구성과 매출 증감 기여는 {period} 한 달과 {year - 1}년 같은 월을 비교합니다.")
+    category = store_period_comparison(month_detail, year, amount_col, ["유형"])
+    st.markdown("#### 상품 유형별 판매 구성")
+    measure = st.radio("구성비 기준", ["판매금액", "판매수량"], horizontal=True, key="store_summary_composition_measure")
+    metric = "금액" if measure == "판매금액" else "수량"
+    positive = category.loc[category[f"금년 {metric}"].gt(0)]
+    left, right = st.columns(2)
+    with left:
+        if positive.empty:
+            st.info("양수인 순판매 실적이 없어 구성비를 표시할 수 없습니다.")
+        else:
+            pie = go.Figure(go.Pie(
+                labels=positive["유형"], values=positive[f"금년 {metric}"],
+                hole=0.45, textinfo="label+percent",
+                hovertemplate="%{label}<br>%{value:,.0f}<br>%{percent}<extra></extra>",
+            ))
+            pie.update_layout(title=f"{selected} · {period} {measure} 구성비", height=440,
+                              margin=dict(l=10, r=10, t=60, b=20))
+            render_plotly_chart(pie, width="stretch", key="store_summary_category_composition")
+            st.caption("도넛 구성비는 반품 차감 후 실적이 양수인 유형의 합계를 기준으로 계산합니다.")
+    with right:
+        render_plotly_chart(store_comparison_bars(category, "유형", metric, year, "상품 유형별 전년 동기 비교"),
+                        width="stretch", key="store_summary_category_yoy")
+    st.markdown("#### 상품 유형별 매출 증감 기여")
+    changes = category.sort_values("금액 증감")
+    contribution = go.Figure(go.Bar(
+        x=changes["금액 증감"], y=changes["유형"], orientation="h",
+        marker_color=["#10B981" if value >= 0 else "#EF4444" for value in changes["금액 증감"]],
+        hovertemplate="%{y}<br>전년 대비 %{x:,.0f}원<extra></extra>",
+    ))
+    contribution.add_vline(x=0, line_color="#94A3B8")
+    contribution.update_layout(height=max(320, 100 + len(changes) * 30),
+                               xaxis_title="전년 동기 대비 판매금액 증감(원)", xaxis_tickformat=",.0f",
+                               margin=dict(l=10, r=10, t=20, b=25))
+    render_plotly_chart(contribution, width="stretch", key="store_summary_category_contribution")
+
+
 def render_store_tab(
     sales: pd.DataFrame, year: int, default_months: tuple[int, int],
     categories: list[str], sku_filter: set[str] | None, amount_col: str,
@@ -1575,9 +1675,12 @@ previous_purchase_amount = float(previous_purchase[amount_col].fillna(0).sum())
 average_price = sales_amount / sales_qty if sales_qty else 0
 previous_average_price = previous_sales_amount / previous_sales_qty if previous_sales_qty else 0
 
-overview_tab, detail_tab, store_tab, plan_tab, forecast_tab, quality_tab = st.tabs(
-    ["전체 현황", "월 상세", "매장별", "사업계획 분석", "예측 발주", "데이터 상태"]
+overview_tab, detail_tab, store_tab, plan_tab, forecast_tab, quality_tab, store_summary_tab = st.tabs(
+    ["전체 현황", "월 상세", "매장별", "사업계획 분석", "예측 발주", "데이터 상태", "매장 요약"]
 )
+
+with store_summary_tab:
+    render_store_summary_tab(sales, base_year, tuple(month_range), selected_categories, sku_filter, amount_col)
 
 with plan_tab:
     render_business_plan(Path(__file__).resolve().parent)
