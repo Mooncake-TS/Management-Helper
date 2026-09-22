@@ -1319,9 +1319,20 @@ def render_store_summary_download(title, subtitle, metrics, figures, filename):
     import streamlit.components.v1 as components
     from plotly.offline import get_plotlyjs
 
+    # Streamlit templates contain placeholder colors resolved only by its frontend.
+    # Standalone Plotly exports need a real template; keep explicit trace colors intact.
+    export_figures = []
+    for fig in figures:
+        if fig is None:
+            export_figures.append(None)
+            continue
+        export_fig = go.Figure(fig)
+        export_fig.update_layout(template="plotly_white")
+        export_figures.append(json.loads(export_fig.to_json()))
+
     payload = json.dumps({
         "title": title, "subtitle": subtitle, "metrics": metrics,
-        "figures": [json.loads(fig.to_json()) if fig is not None else None for fig in figures],
+        "figures": export_figures,
         "filename": filename,
     }, ensure_ascii=False).replace("<", "\\u003c")
     html = r'''<!doctype html><html lang="ko"><head><meta charset="utf-8">
@@ -1480,6 +1491,11 @@ def render_store_summary_tab(
             pie = go.Figure(go.Pie(
                 labels=positive["유형"], values=positive[f"금년 {metric}"],
                 hole=0.45, textinfo="label+percent",
+                marker=dict(colors=[
+                    "#0068C9", "#83C9FF", "#FF2B2B", "#FFABAB", "#29B09D",
+                    "#7DEFA1", "#FF8700", "#FFD16A", "#6D3FC0", "#D5DAE5",
+                    "#2E91E5", "#66C5CC", "#F78D9F", "#A6A6A6",
+                ]),
                 hovertemplate="%{label}<br>%{value:,.0f}<br>%{percent}<extra></extra>",
             ))
             pie.update_layout(title=f"{selected} · {period} {measure} 구성비", height=440,
