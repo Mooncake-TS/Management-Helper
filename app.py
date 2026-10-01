@@ -1602,14 +1602,17 @@ def render_store_summary_tab(sales, year, months, categories, sku_filter, amount
         st.warning(f"사업계획 목표를 읽지 못했습니다: {exc}")
         plan_note = "사업계획 자료 확인 필요"
     download_slot = st.empty()
-    st.markdown(f"#### {year}년 1–{month}월 누적 실적")
+    st.markdown(f"#### {year}년 {month}월 매출 및 누적 실적")
     metrics = []
-    for col, kind, label in zip(st.columns(2), ["금액", "수량"], ["판매금액", "판매수량"]):
-        value = format_money(float(row[f"금년 {kind}"])) if kind=="금액" else f"{row['금년 수량']:,.0f}개"
-        change = row[f"{kind} 증감률"]
-        delta = "전년 비교 기준 없음" if pd.isna(change) else f"{change:+.1%} 전년 대비"
+    card_data = [
+        (f"{month}월 매출금액", now, rate, "전년 동월 대비"),
+        (f"1–{month}월 누적 매출", float(row["금년 금액"]), row["금액 증감률"], "전년 동기 대비"),
+    ]
+    for col, (label, amount, change, comparison) in zip(st.columns(2), card_data):
+        value = format_money(amount)
+        delta = "전년 비교 기준 없음" if change is None or pd.isna(change) else f"{change:+.1%} {comparison}"
         col.metric(label, value, delta)
-        metrics.append(dict(label=label,value=value,delta=delta))
+        metrics.append(dict(label=label, value=value, delta=delta))
     st.write(plan_note)
     st.write(month_compare)
     figures = mobile_build_figures(detail, category, year, month, targets)
@@ -1628,7 +1631,7 @@ def render_store_summary_tab(sales, year, months, categories, sku_filter, amount
             st.dataframe(table,hide_index=True,width="stretch")
     safe_store = re.sub(r'[\\/:*?"<>|]', "_", selected)
     with download_slot.container():
-        render_store_summary_download(selected, f"{year}년 1–{month}월 누적", metrics, figures,
+        render_store_summary_download(selected, f"{year}년 {month}월 실적", metrics, figures,
             f"매장요약_{safe_store}_{year}_{month:02d}월_모바일.png", plan_note, month_compare)
 
 
