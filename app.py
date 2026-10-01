@@ -1313,236 +1313,326 @@ def add_store_last_month_labels(fig: go.Figure, last_month: int, money: bool) ->
     fig.update_xaxes(tickmode="array", tickvals=list(fig.data[0].x), tickangle=0)
 
 
-def render_store_summary_download(title, subtitle, metrics, figures, filename):
-    """Render the same summary figures to a single PNG in the user's browser."""
+def render_store_summary_download(title, subtitle, metrics, figures, filename, plan_note="", month_compare=""):
     import json
     import streamlit.components.v1 as components
     from plotly.offline import get_plotlyjs
-
-    # Streamlit templates contain placeholder colors resolved only by its frontend.
-    # Standalone Plotly exports need a real template; keep explicit trace colors intact.
-    export_figures = []
+    converted = []
     for fig in figures:
-        if fig is None:
-            export_figures.append(None)
-            continue
-        export_fig = go.Figure(fig)
-        export_fig.update_layout(template="plotly_white")
-        export_figures.append(json.loads(export_fig.to_json()))
-
-    payload = json.dumps({
-        "title": title, "subtitle": subtitle, "metrics": metrics,
-        "figures": export_figures,
-        "filename": filename,
-    }, ensure_ascii=False).replace("<", "\\u003c")
-    html = r'''<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<style>
+        copy = go.Figure(fig)
+        copy.update_layout(template="plotly_white")
+        converted.append(json.loads(copy.to_json()))
+    payload = json.dumps(dict(title=title,subtitle=subtitle,metrics=metrics,figures=converted,
+                              filename=filename,plan_note=plan_note,month_compare=month_compare),ensure_ascii=False).replace("<", "\\u003c")
+    html = r'''<!doctype html><html lang="ko"><meta charset="utf-8"><style>
 body{margin:0;font-family:Arial,'Malgun Gothic',sans-serif;color:#334155}
-button,a{font:14px Arial,'Malgun Gothic',sans-serif;border-radius:8px;padding:10px 16px}
-button{background:#2563eb;color:white;border:0;cursor:pointer}button:disabled{opacity:.6;cursor:wait}
-a{color:#2563eb}#status{font-size:12px;margin-top:8px}#plot{position:absolute;left:-10000px;top:0}
-</style></head><body>
-<button id="save">매장 요약 전체 이미지 저장 (PNG)</button>
-<a id="download" hidden>PNG 다운로드</a><div id="status" role="status" aria-live="polite">현재 선택한 매장과 조회 조건으로 전체 내용을 한 장에 저장합니다.</div>
+button{font-size:15px;background:#2563eb;color:white;border:0;border-radius:8px;padding:12px 18px;cursor:pointer}
+button:disabled{opacity:.6;cursor:wait}a{color:#2563eb;margin-left:10px;font-size:14px}#status{font-size:12px;margin-top:8px}
+#plot{position:absolute;left:-10000px;top:0}
+</style><button id="save">모바일 요약 이미지 저장 (PNG)</button><a id="download" hidden>PNG 다운로드</a>
+<div id="status" role="status">선택한 매장의 5가지 핵심 정보를 세로 이미지 한 장으로 저장합니다.</div>
 <div id="plot"></div><script>__PLOTLY__</script><script>
-const report=__PAYLOAD__;
-const button=document.getElementById('save'), status=document.getElementById('status');
-let savedUrl=null;
-const font="Arial, 'Malgun Gothic', sans-serif";
-function wrap(ctx,text,x,y,width,lineHeight){
-  let line='';
-  for(const char of text){
-    if(ctx.measureText(line+char).width>width){ctx.fillText(line,x,y);y+=lineHeight;line='';}
-    line+=char;
-  }
-  ctx.fillText(line,x,y);return y+lineHeight;
-}
-async function chartImage(fig,width,height){
-  if(!fig)return null;
-  const node=document.getElementById('plot');
-  const layout={...fig.layout,width,height,autosize:false,paper_bgcolor:'white',plot_bgcolor:'white',
-    font:{...(fig.layout.font||{}),family:font,color:'#334155',size:20},
-    title:{...fig.layout.title,font:{...(fig.layout.title?.font||{}),size:24}},
-    legend:{...fig.layout.legend,font:{...(fig.layout.legend?.font||{}),size:18}},
-    margin:{...fig.layout.margin,t:100,b:110},
-    annotations:(fig.layout.annotations||[]).map(a=>({...a,font:{...a.font,size:18}}))};
-  for(const axis of ['xaxis','yaxis']){
-    layout[axis]={...fig.layout[axis],tickfont:{size:17},
-      title:{...fig.layout[axis]?.title,font:{size:20}},automargin:true};
-  }
-  const data=fig.data.map(trace=>({...trace,
-    textfont:{...trace.textfont,size:trace.type==='pie'?20:17},
-    insidetextfont:{...trace.insidetextfont,size:20},
-    outsidetextfont:{...trace.outsidetextfont,size:17}}));
-  try{
-    await Plotly.newPlot(node,data,layout,{staticPlot:true,displayModeBar:false});
-    const url=await Plotly.toImage(node,{format:'png',width,height,scale:2});
-    const img=new Image();img.src=url;await img.decode();return img;
-  }finally{Plotly.purge(node);}
+const report=__PAYLOAD__,font="Arial, 'Malgun Gothic', sans-serif";
+const button=document.getElementById('save'),status=document.getElementById('status');let savedUrl=null;
+function wrap(ctx,text,x,y,width,lineHeight){let line='';for(const c of text){if(ctx.measureText(line+c).width>width){ctx.fillText(line,x,y);y+=lineHeight;line='';}line+=c;}ctx.fillText(line,x,y);return y+lineHeight;}
+async function chartImage(fig,index,width,height){
+ const node=document.getElementById('plot'),layout=JSON.parse(JSON.stringify(fig.layout));
+ Object.assign(layout,{width,height,autosize:false,paper_bgcolor:'white',plot_bgcolor:'white',
+ font:{family:font,size:30,color:'#334155'},title:{...layout.title,font:{size:34,color:'#0f172a'}},
+ margin:{l:index>1?175:100,r:70,t:85,b:85}});
+ layout.legend={...layout.legend,font:{size:28},y:-.2};
+ for(const axis of ['xaxis','yaxis']){layout[axis]={...layout[axis],tickfont:{size:28},title:{...layout[axis]?.title,font:{size:27}},automargin:true};}
+ if(index===1){layout.margin={l:10,r:10,t:85,b:15};layout.legend={orientation:'v',x:.64,y:1,font:{size:30}};}
+ if(index===3){layout.margin.b=65;}
+ const data=fig.data.map(t=>({...t,textfont:{...t.textfont,size:30},insidetextfont:{size:30},outsidetextfont:{size:28}}));
+ if(index===1&&data[0])data[0].domain={x:[0,.60]};
+ try{await Plotly.newPlot(node,data,layout,{staticPlot:true,displayModeBar:false});
+ const uri=await Plotly.toImage(node,{format:'png',width,height,scale:2});
+ const img=new Image();img.src=uri;await img.decode();return img;
+ }finally{Plotly.purge(node);}
 }
 button.onclick=async()=>{
-  button.disabled=true;document.getElementById('download').hidden=true;
-  status.textContent='전체 그래프를 이미지로 만드는 중입니다…';
-  try{
-    await document.fonts.ready;
-    const W=1600, pad=48, gap=24, half=(W-pad*2-gap)/2;
-    const trendH=500, categoryH=Math.max(640,...report.figures.slice(2,4).map(f=>f?.layout?.height||0));
-    const contributionH=Math.max(540,report.figures[4].layout.height||0);
-    const canvas=document.createElement('canvas');
-    const measure=canvas.getContext('2d');measure.font='bold 44px '+font;
-    let lines=1,line='';for(const char of report.title){if(measure.measureText(line+char).width>W-2*pad){lines++;line='';}line+=char;}
-    const headerH=65+lines*54, metricsH=180;
-    const H=headerH+metricsH+trendH+categoryH+contributionH+200;
-    canvas.width=W*2;canvas.height=H*2;
-    const ctx=canvas.getContext('2d');ctx.scale(2,2);ctx.fillStyle='white';ctx.fillRect(0,0,W,H);
-    ctx.fillStyle='#0f172a';ctx.font='bold 44px '+font;wrap(ctx,report.title,pad,70,W-pad*2,54);
-    const metrics=report.metrics.filter(m=>['매장 판매금액','매장 판매수량','평균 판매단가'].includes(m.label));
-    const cardW=(W-2*pad-(metrics.length-1)*gap)/metrics.length;
-    metrics.forEach((m,i)=>{
-      const x=pad+i*(cardW+gap);ctx.fillStyle='#f8fafc';ctx.fillRect(x,headerH,cardW,155);
-      ctx.fillStyle='#334155';ctx.font='24px '+font;ctx.fillText(m.label,x+24,headerH+36);
-      ctx.fillStyle='#0f172a';ctx.font='bold 40px '+font;ctx.fillText(m.value,x+24,headerH+89);
-      ctx.fillStyle='#334155';ctx.font='22px '+font;ctx.fillText(m.delta||'',x+24,headerH+130);
-    });
-    let y=headerH+metricsH;
-    const sizes=[[half,trendH],[half,trendH],[half,categoryH],[half,categoryH],[W-2*pad,contributionH]];
-    const images=[];
-    for(let i=0;i<report.figures.length;i++){
-      status.textContent=`그래프 이미지 생성 중 (${i+1}/5)…`;
-      images.push(await chartImage(report.figures[i],...sizes[i]));
-    }
-    for(let i=0;i<2;i++)if(images[i])ctx.drawImage(images[i],pad+i*(half+gap),y,half,trendH);
-    y+=trendH+35;ctx.fillStyle='#0f172a';ctx.font='bold 30px '+font;ctx.fillText('상품 유형별 판매 구성 · 전년 동기 비교',pad,y);y+=20;
-    for(let i=2;i<4;i++)if(images[i])ctx.drawImage(images[i],pad+(i-2)*(half+gap),y,half,categoryH);
-    if(!images[2]){ctx.font='18px '+font;ctx.fillText('양수인 순판매 실적이 없어 구성비를 표시할 수 없습니다.',pad,y+80);}
-    y+=categoryH+55;ctx.fillStyle='#0f172a';ctx.font='bold 30px '+font;ctx.fillText('상품 유형별 매출 증감 기여',pad,y);y+=18;
-    ctx.drawImage(images[4],pad,y,W-2*pad,contributionH);
-    const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
-    if(!blob)throw new Error('PNG 생성 실패');
-    if(savedUrl)URL.revokeObjectURL(savedUrl);savedUrl=URL.createObjectURL(blob);
-    const link=document.getElementById('download');link.href=savedUrl;link.download=report.filename;link.hidden=false;link.click();
-    status.textContent='이미지를 만들었습니다. 저장이 시작되지 않으면 PNG 다운로드를 눌러주세요.';
-  }catch(error){console.error(error);status.textContent='이미지 생성에 실패했습니다. 잠시 후 다시 눌러주세요.';}
-  finally{button.disabled=false;}
+ button.disabled=true;document.getElementById('download').hidden=true;status.textContent='모바일 이미지를 만드는 중입니다…';
+ try{
+  await document.fonts.ready;
+  const W=960,pad=40,heights=[460,410,560,450],gap=25;
+  const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
+  ctx.font='bold 50px '+font;
+  let lines=1,line='';for(const c of report.title){if(ctx.measureText(line+c).width>W-pad*2){lines++;line='';}line+=c;}
+  const headerH=55+lines*60,cardY=headerH+55,chartY=cardY+190;
+  const H=chartY+heights.reduce((a,b)=>a+b,0)+4*gap+180;
+  canvas.width=W*2;canvas.height=H*2;ctx.scale(2,2);ctx.fillStyle='white';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#0f172a';ctx.font='bold 50px '+font;wrap(ctx,report.title,pad,70,W-pad*2,60);
+  ctx.font='30px '+font;ctx.fillText(report.subtitle,pad,headerH+25);
+  const cardW=(W-2*pad-20)/2;
+  report.metrics.forEach((m,i)=>{const x=pad+i*(cardW+20);ctx.fillStyle='#F1F5F9';ctx.fillRect(x,cardY,cardW,165);
+   ctx.fillStyle='#334155';ctx.font='32px '+font;ctx.fillText(m.label,x+22,cardY+43);
+   ctx.fillStyle='#0f172a';ctx.font='bold 50px '+font;ctx.fillText(m.value,x+22,cardY+103);
+   ctx.fillStyle=m.delta.startsWith('-')?'#DC2626':'#15803D';ctx.font='29px '+font;ctx.fillText(m.delta,x+22,cardY+145);});
+  let y=chartY;
+  for(let i=0;i<4;i++){
+   status.textContent=`그래프 이미지 생성 중 (${i+1}/4)…`;
+   const img=await chartImage(report.figures[i],i,W-pad*2,heights[i]);ctx.drawImage(img,pad,y,W-pad*2,heights[i]);y+=heights[i]+gap;
+   if(i===0){ctx.fillStyle='#334155';ctx.font='30px '+font;y=wrap(ctx,report.plan_note,pad,y,W-pad*2,38)+12;}
+   if(i===1){ctx.fillStyle='#334155';ctx.font='30px '+font;y=wrap(ctx,report.month_compare,pad,y,W-pad*2,38)+12;}
+  }
+  const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));if(!blob)throw Error('PNG 생성 실패');
+  if(savedUrl)URL.revokeObjectURL(savedUrl);savedUrl=URL.createObjectURL(blob);
+  const link=document.getElementById('download');link.href=savedUrl;link.download=report.filename;link.hidden=false;link.click();
+  status.textContent='이미지를 만들었습니다. 저장이 시작되지 않으면 PNG 다운로드를 눌러주세요.';
+ }catch(e){console.error(e);status.textContent='이미지 생성에 실패했습니다. 다시 눌러주세요.';}
+ finally{button.disabled=false;}
 };
-</script></body></html>'''
-    components.html(html.replace("__PAYLOAD__", payload).replace("__PLOTLY__", get_plotlyjs()), height=100)
+</script></html>'''
+    components.html(html.replace("__PAYLOAD__",payload).replace("__PLOTLY__",get_plotlyjs()),height=105)
 
-def render_store_summary_tab(
-    sales: pd.DataFrame, year: int, months: tuple[int, int],
-    categories: list[str], sku_filter: set[str] | None, amount_col: str,
-) -> None:
-    st.caption("왼쪽의 기준 연도·조회 월·상품 유형·품목·금액 기준을 적용합니다. 매장을 선택해 핵심 실적을 확인하세요.")
-    view = filtered_for_years(sales, [year - 1, year], months, categories, sku_filter).copy()
-    view["매장명"] = view["창고명"].fillna("").astype(str).str.strip().replace("", "매장명 미입력")
-    if view.empty:
-        st.info("선택한 조회 조건에 해당하는 판매자료가 없습니다.")
-        return
-    summary = store_period_comparison(view, year, amount_col, ["매장명"])
-    st.subheader("매장 요약")
-    selected = st.selectbox("분석할 매장", summary["매장명"].tolist(), key="store_summary_detail_selection")
-    detail = view.loc[view["매장명"].eq(selected)]
-    row = summary.loc[summary["매장명"].eq(selected)].iloc[0]
-    download_slot = st.empty()
-    export_figures = []
-    export_metrics = []
-    cols = st.columns(4)
-    for col, metric, label in ((cols[0], "금액", "매장 판매금액"), (cols[1], "수량", "매장 판매수량")):
-        value = format_money(float(row[f"금년 {metric}"])) if metric == "금액" else f'{row["금년 수량"]:,.0f}개'
-        rate = row[f"{metric} 증감률"]
-        delta = "전년 비교 기준 없음" if pd.isna(rate) else f"{rate:+.1%} 전년 대비"
-        col.metric(label, value, delta)
-        export_metrics.append(dict(label=label, value=value, delta=delta))
-    cols[2].metric("전체 판매금액 중 비중", f'{row["금년 구성비"]:.1%}' if pd.notna(row["금년 구성비"]) else "—")
-    asp = row["금년 금액"] / row["금년 수량"] if row["금년 수량"] > 0 else None
-    cols[3].metric("평균 판매단가", f"{asp:,.0f}원" if asp is not None else "—")
 
-    export_metrics.extend([
-        dict(label="전체 판매금액 중 비중", value=f'{row["금년 구성비"]:.1%}' if pd.notna(row["금년 구성비"]) else "—"),
-        dict(label="평균 판매단가", value=f"{asp:,.0f}원" if asp is not None else "—"),
-    ])
 
-    current_detail = detail.loc[detail["연도"].eq(year)]
-    if current_detail.empty:
-        st.info("선택한 조회 기간에 이 매장의 금년 판매자료가 없습니다.")
-        return
-    last_month = int(current_detail["월"].max())
-    chart_months = (months[0], last_month)
-    st.caption(f"월별 추이: {year}년 {months[0]}–{last_month}월 · 마지막 데이터 월: {last_month}월")
-    left, right = st.columns(2)
-    for container, value_col, label, money, chart_key in (
-        (left, amount_col, "판매금액", True, "store_summary_amount_monthly"),
-        (right, "수량", "판매수량", False, "store_summary_quantity_monthly"),
-    ):
-        with container:
-            fig = comparison_chart(
-                detail, year, value_col, f"{selected} · 월별 {label}", money, chart_months,
-            )
-            add_store_last_month_labels(fig, last_month, money)
-            render_plotly_chart(fig, width="stretch", key=chart_key)
-            export_figures.append(fig)
 
-    month_detail = detail.loc[detail["월"].eq(last_month)]
-    period = f"{year}년 {last_month}월"
-    st.divider()
-    st.caption(f"아래 판매 구성과 매출 증감 기여는 {period} 한 달과 {year - 1}년 같은 월을 비교합니다.")
-    category = store_period_comparison(month_detail, year, amount_col, ["유형"])
-    st.markdown("#### 상품 유형별 판매 구성")
-    measure = st.radio("구성비 기준", ["판매금액", "판매수량"], horizontal=True, key="store_summary_composition_measure")
-    metric = "금액" if measure == "판매금액" else "수량"
-    pie = None
-    positive = category.loc[category[f"금년 {metric}"].gt(0)]
-    left, right = st.columns(2)
-    with left:
-        if positive.empty:
-            st.info("양수인 순판매 실적이 없어 구성비를 표시할 수 없습니다.")
-        else:
-            pie = go.Figure(go.Pie(
-                labels=positive["유형"], values=positive[f"금년 {metric}"],
-                hole=0.45, textinfo="label+percent",
-                marker=dict(colors=[
-                    "#0068C9", "#83C9FF", "#FF2B2B", "#FFABAB", "#29B09D",
-                    "#7DEFA1", "#FF8700", "#FFD16A", "#6D3FC0", "#D5DAE5",
-                    "#2E91E5", "#66C5CC", "#F78D9F", "#A6A6A6",
-                ]),
-                hovertemplate="%{label}<br>%{value:,.0f}<br>%{percent}<extra></extra>",
-            ))
-            pie.update_layout(title=f"{selected} · {period} {measure} 구성비", height=440,
-                              margin=dict(l=10, r=10, t=60, b=20))
-            render_plotly_chart(pie, width="stretch", key="store_summary_category_composition")
-            st.caption("도넛 구성비는 반품 차감 후 실적이 양수인 유형의 합계를 기준으로 계산합니다.")
-    export_figures.append(pie)
-    with right:
-        category_yoy = store_comparison_bars(category, "유형", metric, year, "상품 유형별 전년 동기 비교")
-        render_plotly_chart(category_yoy, width="stretch", key="store_summary_category_yoy")
-        export_figures.append(category_yoy)
-    st.markdown("#### 상품 유형별 매출 증감 기여")
-    changes = category.sort_values("금액 증감")
-    contribution = go.Figure(go.Bar(
-        x=changes["금액 증감"], y=changes["유형"], orientation="h",
-        marker_color=["#10B981" if value >= 0 else "#EF4444" for value in changes["금액 증감"]],
-        hovertemplate="%{y}<br>전년 대비 %{x:,.0f}원<extra></extra>",
-    ))
+
+MOBILE_COLORS = ["#2563EB", "#06B6D4", "#F97316", "#10B981", "#8B5CF6", "#94A3B8"]
+
+
+def mobile_store_key(value):
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value)))
+
+
+@st.cache_data(show_spinner=False)
+def read_mobile_targets(content: bytes) -> pd.DataFrame:
+    """Read targets only: sales cells and their formula caches are not required."""
+    from io import BytesIO
+    from openpyxl import load_workbook
+    book = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    try:
+        sheet = next((s for s in book if "사업계획" in s.title), book.worksheets[0])
+        rows = list(sheet.values)
+        header = next((i for i, r in enumerate(rows[:20]) if len(r) > 3 and "아쿠아샵" in str(r[2]) and r[3]), None)
+        if header is None:
+            raise ValueError("사업계획의 매장명 헤더를 찾지 못했습니다.")
+        stores = {c: re.sub(r"\s+", " ", str(rows[header][c])).strip()
+                  for c in range(3, min(24, len(rows[header]))) if rows[header][c]}
+        records, month = [], None
+        for row in rows[header + 1:]:
+            marker = str(row[0] or "").strip()
+            match = re.fullmatch(r"(\d{1,2})월", marker)
+            if match:
+                month = int(match[1])
+            elif marker:
+                month = None
+            label = re.fullmatch(r"(20\d{2})년\s*매출\s*목표", str(row[1] or "").strip())
+            if month is None or not 1 <= month <= 12 or not label:
+                continue
+            for col, name in stores.items():
+                value = row[col] if col < len(row) else None
+                if value is not None and not isinstance(value, (int, float)):
+                    raise ValueError(f"{name} {month}월 목표가 숫자가 아닙니다.")
+                records.append(dict(연도=int(label[1]), 월=month, 매장=name,
+                                    목표=float(value) if value is not None else float("nan")))
+        frame = pd.DataFrame(records, columns=["연도", "월", "매장", "목표"])
+        if frame.duplicated(["연도", "월", "매장"]).any():
+            raise ValueError("동일 연도·월·매장의 목표가 중복되어 있습니다.")
+        return frame
+    finally:
+        book.close()
+
+
+def mobile_default_plan_store(store, options):
+    aliases = {
+        "강동워터파크": "블루원(경주)", "인스파이어썬투먼": "코코플레이어(영종도)",
+        "본사창고(천안)": "납품거래처",
+        "아산스파비스": "스파비스(아산)", "부천웅진": "웅진플레이도시(부천)",
+        "김해롯데": "롯데워터파크(김해)", "클럽디오아시스(LCT)": "클럽디오아시스(부산)",
+        "하남아쿠아필드": "아쿠아필드(하남)", "안성아쿠아필드": "아쿠아필드(안성)",
+        "고양아쿠아필드": "아쿠아필드(고양)", "장암아일랜드캐슬": "아일랜드캐슬(의정부)",
+        "부여롯데": "롯데리조트(부여)", "속초롯데": "롯데리조트(속초)",
+        "오레브핫스프링": "오레브핫스프링(제주)", "제천리솜": "해브나인리솜(제천)",
+        "스플라스리솜(19년)": "스플라스리솜(덕산)",
+        "인스파이어스플래시베이": "스플래쉬베이(인스파이어)",
+        "영종도수피": "인스파이어_수피(영종도)", "한화경주": "한화리조트(경주)",
+    }
+    wanted = aliases.get(mobile_store_key(store), mobile_store_key(store))
+    matches = [name for name in options if mobile_store_key(name) == wanted]
+    return matches[0] if len(matches) == 1 else None
+
+
+def mobile_group_categories(category, n=5, mode="comparison"):
+    """Retain all money, including prior-only and negative-return categories."""
+    if category.empty:
+        return category.copy()
+    rank = category["금액 증감"].abs() if mode == "change" else category[["금년 금액", "전년 금액"]].abs().max(axis=1)
+    order = rank.sort_values(ascending=False, kind="stable").index
+    kept = category.loc[order[:n]].copy()
+    if len(order) > n:
+        rest = category.loc[order[n:]]
+        total = {col: rest[col].sum() for col in ["금년 금액", "전년 금액", "금액 증감"]}
+        kept = pd.concat([kept, pd.DataFrame([dict(유형="그 외 합계", **total)])], ignore_index=True)
+    return kept
+
+
+def mobile_chart_layout(fig, title, height=440):
+    fig.update_layout(template="plotly_white", title=dict(text=title, font=dict(size=23)),
+                      font=dict(family="Arial, Malgun Gothic, sans-serif", size=18, color="#334155"),
+                      height=height, margin=dict(l=15, r=20, t=70, b=65),
+                      legend=dict(orientation="h", y=-0.15, x=0, font=dict(size=17)),
+                      paper_bgcolor="white", plot_bgcolor="white")
+    return fig
+
+
+def mobile_build_figures(detail, category, year, month, targets):
+    ticks = list(range(1, 13))
+    current = monthly_values(detail, year, "합계", (1, 12))
+    previous = monthly_values(detail, year - 1, "합계", (1, 12))
+    current.loc[month + 1:] = float("nan")
+    fig = go.Figure()
+    for name, values, color, dash in ((str(year - 1), previous, "#94A3B8", "dot"),
+                                     (str(year), current, "#2563EB", None),
+                                     ("사업계획", targets, "#F59E0B", "dash")):
+        if values is None:
+            continue
+        fig.add_trace(go.Scatter(x=ticks, y=[None if pd.isna(v) else float(v) / 1e8 for v in values],
+                                name=name, mode="lines+markers", connectgaps=False,
+                                line=dict(color=color, width=3, dash=dash), marker=dict(size=7),
+                                hovertemplate="%{x}월<br>%{y:.2f}억 원<extra>%{fullData.name}</extra>"))
+    fig = mobile_chart_layout(fig, "월별 매출 · 전년 · 사업계획", 440)
+    fig.update_xaxes(tickmode="array", tickvals=ticks, ticktext=[str(m) for m in ticks], title="월")
+    fig.update_yaxes(title="억 원", tickformat=".1f", rangemode="tozero")
+    fig.add_vline(x=month, line_width=1, line_dash="dot", line_color="#CBD5E1")
+
+    positive = category.loc[category["금년 금액"].gt(0)].sort_values("금년 금액", ascending=False)
+    pie = go.Figure()
+    if not positive.empty:
+        values = positive["금년 금액"].head(4).tolist()
+        labels = positive["유형"].head(4).tolist()
+        if len(positive) > 4:
+            labels.append("그 외 합계")
+            values.append(float(positive["금년 금액"].iloc[4:].sum()))
+        pie.add_trace(go.Pie(labels=labels, values=values, hole=.52, sort=False,
+                             marker=dict(colors=MOBILE_COLORS), textinfo="percent", textposition="inside",
+                             textfont=dict(size=20), hovertemplate="%{label}<br>%{value:,.0f}원<br>%{percent}<extra></extra>"))
+    else:
+        pie.add_annotation(text="양수인 순매출 없음", x=.5, y=.5, showarrow=False)
+    mobile_chart_layout(pie, f"{month}월 상품 유형별 매출 구성", 410)
+    pie.update_layout(legend=dict(orientation="v", x=1, y=.9, font=dict(size=18)),
+                      margin=dict(l=10, r=20, t=65, b=15))
+    if pie.data:
+        pie.data[0].domain = dict(x=[0, .65])
+
+    grouped = mobile_group_categories(category)
+    bars = go.Figure()
+    for prefix, compare_year, color in (("전년", year-1, "#CBD5E1"), ("금년", year, "#2563EB")):
+        values = grouped[f"{prefix} 금액"] / 1e4
+        bars.add_trace(go.Bar(x=values.tolist(), y=grouped["유형"].tolist(), orientation="h",
+                             name=str(compare_year), marker_color=color,
+                             text=[f"{v:,.0f}" for v in values], textposition="outside", cliponaxis=False,
+                             hovertemplate="%{y}<br>%{x:,.1f}만 원<extra>%{fullData.name}</extra>"))
+    mobile_chart_layout(bars, f"{month}월 전년 동기 금액 비교", 500)
+    bars.update_layout(barmode="group")
+    bars.update_yaxes(autorange="reversed")
+    extremes = grouped[["금년 금액", "전년 금액"]].to_numpy().flatten() / 1e4
+    lo, hi = min(0, min(extremes, default=0)), max(0, max(extremes, default=0))
+    span = hi-lo or 1
+    bars.update_xaxes(title="만 원", range=[lo-span*.28 if lo<0 else 0, hi+span*.35], nticks=4)
+
+    changes = mobile_group_categories(category, mode="change").sort_values("금액 증감", ascending=False)
+    values = changes["금액 증감"] / 1e4
+    contribution = go.Figure(go.Bar(x=values.tolist(), y=changes["유형"].tolist(), orientation="h",
+        marker_color=["#10B981" if v>=0 else "#EF4444" for v in values],
+        text=[f"{v:+,.0f}" for v in values], textposition="outside", cliponaxis=False,
+        hovertemplate="%{y}<br>매출 증감 %{x:+,.1f}만 원<extra></extra>"))
+    mobile_chart_layout(contribution, f"{month}월 매출 증감 기여", 410)
     contribution.add_vline(x=0, line_color="#94A3B8")
-    contribution.update_layout(height=max(320, 100 + len(changes) * 30),
-                               xaxis_title="전년 동기 대비 판매금액 증감(원)", xaxis_tickformat=",.0f",
-                               margin=dict(l=10, r=10, t=20, b=25))
-    render_plotly_chart(contribution, width="stretch", key="store_summary_category_contribution")
+    lo, hi = min(0, min(values, default=0)), max(0, max(values, default=0))
+    span = hi-lo or 1
+    contribution.update_xaxes(title="만 원", range=[lo-span*.30, hi+span*.30], nticks=4)
+    contribution.update_yaxes(autorange="reversed")
+    return [fig, pie, bars, contribution]
 
 
-    export_figures.append(contribution)
-    selected_sku = "전체" if sku_filter is None else ", ".join(sorted(map(str, sku_filter)))
-    subtitle = (
-        f"조회 기간: {year}년 {months[0]}–{months[1]}월 | 구성·증감 분석: {period} (전년 같은 월 비교) | "
-        f"금액 기준: {amount_col} | 구성비: {measure} | "
-        f"상품 유형: {', '.join(categories)} | 품목: {selected_sku}"
-    )
+def render_store_summary_tab(sales, year, months, categories, sku_filter, amount_col):
+    from business_plan import find_plan_file
+    st.subheader("매장 요약")
+    st.caption("매장 전체 상품·부가세 포함 기준입니다. 왼쪽 조회 월의 마지막 월을 보고 월로 사용하며, 누적은 1월부터 집계합니다.")
+    current_dates = sales.loc[sales["연도"].eq(year), "월"]
+    if current_dates.empty:
+        st.info("선택 연도의 판매자료가 없습니다.")
+        return
+    month = min(int(months[1]), int(current_dates.max()))
+    view = sales.loc[sales["연도"].isin([year-1, year])].copy()
+    view["매장명"] = view["창고명"].fillna("").astype(str).str.strip().replace("", "매장명 미입력")
+    options = sorted(view["매장명"].unique().tolist())
+    if st.session_state.get("store_summary_detail_selection") not in options:
+        st.session_state.pop("store_summary_detail_selection", None)
+    selected = st.selectbox("분석할 매장", options, key="store_summary_detail_selection")
+    detail = view.loc[view["매장명"].eq(selected)]
+    cumulative = detail.loc[detail["월"].le(month)]
+    cumulative_row = store_period_comparison(cumulative, year, "합계", ["매장명"])
+    if cumulative_row.empty:
+        st.info("이 매장에는 보고 월까지 판매자료가 없습니다.")
+        return
+    row = cumulative_row.iloc[0]
+    category = store_period_comparison(detail.loc[detail["월"].eq(month)], year, "합계", ["유형"])
+    now = float(category["금년 금액"].sum())
+    prior = float(category["전년 금액"].sum())
+    rate = (now/prior-1) if prior>0 else None
+    month_compare = f"{month}월 {format_money(now)} · 전년 {format_money(prior)} · " + (f"{rate:+.1%}" if rate is not None else "증감률 비교 기준 없음")
+    targets, plan_note = None, "사업계획 연결 없음"
+    path = find_plan_file(Path(__file__).resolve().parent)
+    try:
+        # Respect the plan-tab upload, but consume only target cells from that file.
+        upload = st.session_state.get("bp_upload")
+        plan = read_mobile_targets(upload.getvalue() if upload is not None else path.read_bytes()) if upload is not None or path else pd.DataFrame()
+        if not plan.empty:
+            plan = plan.loc[plan["연도"].eq(year)]
+            names = sorted(plan["매장"].unique().tolist())
+            default = mobile_default_plan_store(selected, names)
+            with st.expander("사업계획 매장 연결", expanded=default is None):
+                choices = ["연결 없음"] + names
+                chosen = st.selectbox("사업계획의 매장", choices, index=choices.index(default) if default else 0,
+                                      key=f"mobile_plan_store_{year}_{selected}")
+                st.caption("목표만 사업계획에서 읽습니다. 금년·전년 실적은 판매 엑셀에서 자동 집계합니다.")
+            if chosen != "연결 없음":
+                targets = plan.loc[plan["매장"].eq(chosen)].set_index("월")["목표"].reindex(range(1,13))
+                upto = targets.loc[:month]
+                if upto.notna().all() and upto.sum()>0:
+                    target_total = float(upto.sum())
+                    plan_note = f"1–{month}월 목표 달성 {row['금년 금액']/target_total:.1%} · 목표 {format_money(target_total)}"
+                else:
+                    plan_note = "누적 목표 비교 불가 (목표 미입력 또는 0)"
+    except (ValueError, OSError, KeyError) as exc:
+        st.warning(f"사업계획 목표를 읽지 못했습니다: {exc}")
+        plan_note = "사업계획 자료 확인 필요"
+    download_slot = st.empty()
+    st.markdown(f"#### {year}년 1–{month}월 누적 실적")
+    metrics = []
+    for col, kind, label in zip(st.columns(2), ["금액", "수량"], ["판매금액", "판매수량"]):
+        value = format_money(float(row[f"금년 {kind}"])) if kind=="금액" else f"{row['금년 수량']:,.0f}개"
+        change = row[f"{kind} 증감률"]
+        delta = "전년 비교 기준 없음" if pd.isna(change) else f"{change:+.1%} 전년 대비"
+        col.metric(label, value, delta)
+        metrics.append(dict(label=label,value=value,delta=delta))
+    st.write(plan_note)
+    st.write(month_compare)
+    figures = mobile_build_figures(detail, category, year, month, targets)
+    for index, fig in enumerate(figures):
+        st.plotly_chart(fig, width="stretch", theme=None, key=f"mobile_summary_chart_{index}")
+    st.caption("구성비는 순매출이 양수인 유형 기준입니다. 비교는 주요 5개 유형, 기여도는 증감액 절대값 상위 5개 유형을 표시하며 나머지는 그 외 합계로 모두 포함합니다.")
+    with st.expander("총평 확인용 상세 수치"):
+        st.write(f"{selected} · {year}년 {month}월 · {month_compare}")
+        st.write(plan_note)
+        render_store_table(category)
+        if targets is not None:
+            table = pd.DataFrame({"월":range(1,month+1),
+                "전년 실적":monthly_values(detail,year-1,"합계",(1,month)).values,
+                "금년 실적":monthly_values(detail,year,"합계",(1,month)).values,
+                "사업계획":targets.loc[:month].values})
+            st.dataframe(table,hide_index=True,width="stretch")
     safe_store = re.sub(r'[\\/:*?"<>|]', "_", selected)
     with download_slot.container():
-        render_store_summary_download(
-            selected, subtitle, export_metrics, export_figures,
-            f"매장요약_{safe_store}_{year}_{months[0]:02d}-{months[1]:02d}월.png",
-        )
+        render_store_summary_download(selected, f"{year}년 1–{month}월 누적", metrics, figures,
+            f"매장요약_{safe_store}_{year}_{month:02d}월_모바일.png", plan_note, month_compare)
+
+
+
 
 
 def render_store_tab(
