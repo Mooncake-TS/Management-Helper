@@ -1494,7 +1494,7 @@ def mobile_build_figures(detail, category, year, month, targets):
                                 line=dict(color=color, width=3, dash=dash), marker=dict(size=7),
                                 hovertemplate="%{x}월<br>%{y:.2f}억 원<extra>%{fullData.name}</extra>"))
     fig = mobile_chart_layout(fig, "월별 매출 · 전년 · 사업계획", 440)
-    fig.update_xaxes(tickmode="array", tickvals=ticks, ticktext=[str(m) for m in ticks], title="월")
+    fig.update_xaxes(tickmode="array", tickvals=ticks, ticktext=[str(m) for m in ticks], title=None)
     fig.update_yaxes(title="억 원", tickformat=".1f", rangemode="tozero")
     fig.add_vline(x=month, line_width=1, line_dash="dot", line_color="#CBD5E1")
 
@@ -1506,7 +1506,7 @@ def mobile_build_figures(detail, category, year, month, targets):
         if len(positive) > 4:
             labels.append("그 외 합계")
             values.append(float(positive["금년 금액"].iloc[4:].sum()))
-        pie.add_trace(go.Pie(labels=labels, values=values, hole=.52, sort=False,
+        pie.add_trace(go.Pie(labels=labels, values=values, hole=0, sort=False,
                              marker=dict(colors=MOBILE_COLORS), textinfo="percent", textposition="inside",
                              textfont=dict(size=20), hovertemplate="%{label}<br>%{value:,.0f}원<br>%{percent}<extra></extra>"))
     else:
@@ -1519,7 +1519,7 @@ def mobile_build_figures(detail, category, year, month, targets):
 
     grouped = mobile_group_categories(category)
     bars = go.Figure()
-    for prefix, compare_year, color in (("전년", year-1, "#CBD5E1"), ("금년", year, "#2563EB")):
+    for prefix, compare_year, color in (("금년", year, "#2563EB"), ("전년", year-1, "#CBD5E1")):
         values = grouped[f"{prefix} 금액"] / 1e4
         bars.add_trace(go.Bar(x=values.tolist(), y=grouped["유형"].tolist(), orientation="h",
                              name=str(compare_year), marker_color=color,
