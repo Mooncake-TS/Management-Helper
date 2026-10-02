@@ -1342,6 +1342,7 @@ async function chartImage(fig,index,width,height){
  margin:{l:index>1?175:100,r:70,t:85,b:85}});
  layout.legend={...layout.legend,font:{size:28},y:-.2};
  for(const axis of ['xaxis','yaxis']){layout[axis]={...layout[axis],tickfont:{size:28},title:{...layout[axis]?.title,font:{size:27}},automargin:true};}
+ if(index===0){layout.margin.r=240;layout.annotations=(layout.annotations||[]).map(a=>({...a,font:{...a.font,size:25}}));}
  if(index===1){layout.margin={l:10,r:10,t:85,b:15};layout.legend={orientation:'v',x:.64,y:1,font:{size:30}};}
  if(index===3){layout.margin.b=65;}
  const data=fig.data.map(t=>({...t,textfont:{...t.textfont,size:30},insidetextfont:{size:30},outsidetextfont:{size:28}}));
@@ -1556,7 +1557,33 @@ def mobile_build_figures(detail, category, year, month, targets):
     fig = mobile_chart_layout(fig, "월별 매출 · 전년 · 사업계획", 440)
     fig.update_xaxes(tickmode="array", tickvals=ticks, ticktext=[str(m) for m in ticks], title=None)
     fig.update_yaxes(title="억 원", tickformat=".1f", rangemode="tozero")
-    fig.add_vline(x=month, line_width=1, line_dash="dot", line_color="#CBD5E1")
+    recorded = detail.loc[detail["연도"].eq(year) & detail["월"].le(month), "월"]
+    if not recorded.empty:
+        label_month = int(recorded.max())
+        fig.add_vline(x=label_month, line_width=1, line_dash="dot", line_color="#CBD5E1")
+        points = []
+        for name, values, color in ((str(year), current, "#2563EB"),
+                                    (str(year-1), previous, "#94A3B8"),
+                                    ("사업계획", targets, "#F59E0B")):
+            if values is not None and pd.notna(values.get(label_month)):
+                points.append((name, float(values.loc[label_month])/1e8, color))
+        visible = [float(v) for trace in fig.data for v in trace.y if v is not None and pd.notna(v)]
+        low, high = min([0]+visible), max([0]+visible)
+        span = high-low or 1
+        bottom, top = low-span*.08, high+span*.12
+        fig.update_yaxes(range=[bottom, top])
+        fig.update_xaxes(range=[.6, 12.5])
+        fig.update_layout(margin=dict(l=65, r=190, t=70, b=90))
+        # Fixed, ordered callout positions keep even identical values separated.
+        for index, (name, value, color) in enumerate(sorted(points, key=lambda p:p[1], reverse=True)):
+            fraction = .78-index*.28 if len(points)>1 else .5
+            fig.add_annotation(x=label_month, y=value, xref="x", yref="y",
+                ax=12.85, ay=bottom+(top-bottom)*fraction, axref="x", ayref="y",
+                text=f"{name} · {label_month}월<br><b>{value:,.2f}억 원</b>",
+                showarrow=True, arrowhead=0, arrowwidth=1.2, arrowcolor=color,
+                xanchor="left", align="left", bgcolor="white", borderpad=4,
+                font=dict(size=15, color=color))
+
 
     positive = category.loc[category["금년 금액"].gt(0)].sort_values("금년 금액", ascending=False)
     pie = go.Figure()
