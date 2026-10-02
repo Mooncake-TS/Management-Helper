@@ -1359,16 +1359,16 @@ button.onclick=async()=>{
   const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
   ctx.font='bold 50px '+font;
   let lines=1,line='';for(const c of report.title){if(ctx.measureText(line+c).width>W-pad*2){lines++;line='';}line+=c;}
-  const headerH=55+lines*60,cardY=headerH+55,chartY=cardY+190;
+  const headerH=55+lines*60,cardY=headerH+55,chartY=cardY+Math.ceil(report.metrics.length/2)*190;
   const H=chartY+heights.reduce((a,b)=>a+b,0)+4*gap+180;
   canvas.width=W*2;canvas.height=H*2;ctx.scale(2,2);ctx.fillStyle='white';ctx.fillRect(0,0,W,H);
   ctx.fillStyle='#0f172a';ctx.font='bold 50px '+font;wrap(ctx,report.title,pad,70,W-pad*2,60);
   ctx.font='30px '+font;ctx.fillText(report.subtitle,pad,headerH+25);
   const cardW=(W-2*pad-20)/2;
-  report.metrics.forEach((m,i)=>{const x=pad+i*(cardW+20);ctx.fillStyle='#F1F5F9';ctx.fillRect(x,cardY,cardW,165);
-   ctx.fillStyle='#334155';ctx.font='32px '+font;ctx.fillText(m.label,x+22,cardY+43);
-   ctx.fillStyle='#0f172a';ctx.font='bold 50px '+font;ctx.fillText(m.value,x+22,cardY+103);
-   ctx.fillStyle=m.delta.startsWith('-')?'#DC2626':'#15803D';ctx.font='29px '+font;ctx.fillText(m.delta,x+22,cardY+145);});
+  report.metrics.forEach((m,i)=>{const x=pad+(i%2)*(cardW+20),cy=cardY+Math.floor(i/2)*190;ctx.fillStyle='#F1F5F9';ctx.fillRect(x,cy,cardW,165);
+   ctx.fillStyle='#334155';ctx.font='32px '+font;ctx.fillText(m.label,x+22,cy+43);
+   ctx.fillStyle='#0f172a';ctx.font='bold 50px '+font;ctx.fillText(m.value,x+22,cy+103);
+   ctx.fillStyle=m.delta.startsWith('-')?'#DC2626':m.delta.startsWith('+')?'#15803D':'#64748B';ctx.font='29px '+font;ctx.fillText(m.delta,x+22,cy+145);});
   let y=chartY;
   for(let i=0;i<4;i++){
    status.textContent=`그래프 이미지 생성 중 (${i+1}/4)…`;
@@ -1434,6 +1434,66 @@ def read_mobile_targets(content: bytes) -> pd.DataFrame:
         return frame
     finally:
         book.close()
+
+
+
+@st.cache_data(show_spinner=False)
+def read_mobile_visitors(content: bytes) -> pd.DataFrame:
+    from io import BytesIO
+    from openpyxl import load_workbook
+    book = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    try:
+        rows = list(book.worksheets[0].values)
+        header = next(i for i, row in enumerate(rows) if len(row)>2 and re.search(r"\d{2,4}년 기준 입장객", str(row[1])))
+        year = int(re.search(r"(\d{2,4})년", str(rows[header][1]))[1])
+        year = year + 2000 if year < 100 else year
+        stores = {i: mobile_store_key(name) for i, name in enumerate(rows[header]) if i>=3 and name}
+        records, month = [], None
+        for row in rows[header+1:]:
+            match = re.fullmatch(r"(\d{1,2})월", str(row[1] or "").strip())
+            if match: month = int(match[1])
+            label = str(row[2] or "").strip()
+            if month is None or not 1<=month<=12 or label not in ("금년도", "전년도"): continue
+            for col, name in stores.items():
+                value = row[col] if col<len(row) else None
+                count = float(value) if isinstance(value,(int,float)) and value>0 else None
+                records.append(dict(연도=year if label=="금년도" else year-1, 월=month, 매장=name, 입장객=count))
+        frame = pd.DataFrame(records, columns=["연도","월","매장","입장객"])
+        if frame.duplicated(["연도","월","매장"]).any():
+            raise ValueError("입장객 자료의 연도·월·매장이 중복됩니다.")
+        return frame
+    finally:
+        book.close()
+
+
+def mobile_visitor_cards(content, store, year, month, now, prior):
+    aliases = {
+        "아산스파비스":"아산스파비스", "부천웅진":"부천웅진플레이도시",
+        "강동워터파크":"경주강동워터파크", "김해롯데":"김해롯데워터파크",
+        "클럽디오아시스(LCT)":"부산클럽디오아시스",
+        "하남아쿠아필드":"하남아쿠아필드", "안성아쿠아필드":"안성아쿠아필드",
+        "고양아쿠아필드":"고양아쿠아필드", "장암아일랜드캐슬":"장암아일랜드캐슬",
+        "부여롯데":"부여롯데리조트", "속초롯데":"속초롯데리조트",
+        "오레브핫스프링":"제주오레브핫스프링",
+        "인스파이어스플래시베이":"영종도스플래쉬베이",
+        "제천리솜":"제천해브나인", "스플라스리솜(19년)":"덕산스플라스",
+    }
+    counts = []
+    frame = read_mobile_visitors(content) if content else pd.DataFrame(columns=["연도","월","매장","입장객"])
+    key = aliases.get(mobile_store_key(store), mobile_store_key(store))
+    for target_year in [year, year-1]:
+        matches = frame.loc[frame["매장"].eq(key) & frame["연도"].eq(target_year) & frame["월"].eq(month), "입장객"]
+        counts.append(float(matches.iloc[0]) if len(matches)==1 and pd.notna(matches.iloc[0]) and matches.iloc[0]>0 else None)
+    current, previous = counts
+    spend = now/current if current else None
+    previous_spend = prior/previous if previous else None
+    result = []
+    for label, value, old, unit in [(f"{month}월 입장객 수",current,previous,"명"), ("객단가",spend,previous_spend,"원")]:
+        change = value/old-1 if value is not None and old is not None and old>0 else None
+        delta = f"{change:+.1%} 전년 동월 대비" if change is not None else "전년 비교 기준 없음"
+        result.append(dict(label=label, value=f"{value:,.0f}{unit}" if value is not None else "미입력",
+                           delta=delta if value is not None else "입장객 자료 미입력"))
+    return result
 
 
 def mobile_default_plan_store(store, options):
@@ -1613,6 +1673,18 @@ def render_store_summary_tab(sales, year, months, categories, sku_filter, amount
         delta = "전년 비교 기준 없음" if change is None or pd.isna(change) else f"{change:+.1%} {comparison}"
         col.metric(label, value, delta)
         metrics.append(dict(label=label, value=value, delta=delta))
+    visitor_path = Path(__file__).resolve().parent / f"FY{year % 100:02d} 입장객.xlsx"
+    try:
+        visitor_cards = mobile_visitor_cards(visitor_path.read_bytes() if visitor_path.is_file() else None,
+                                             selected, year, month, now, prior)
+    except (ValueError, OSError, KeyError, StopIteration) as exc:
+        st.warning(f"입장객 자료를 확인해 주세요: {exc}")
+        visitor_cards = mobile_visitor_cards(None, selected, year, month, now, prior)
+    for col, card in zip(st.columns(2), visitor_cards):
+        col.metric(card["label"], card["value"], card["delta"],
+                   delta_color="normal" if card["delta"].startswith(("+","-")) else "off")
+    metrics.extend(visitor_cards)
+    st.caption("객단가 = 해당 월 매출(부가세 포함) ÷ 입장객 수")
     st.write(plan_note)
     st.write(month_compare)
     figures = mobile_build_figures(detail, category, year, month, targets)
