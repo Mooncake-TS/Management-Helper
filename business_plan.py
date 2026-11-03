@@ -336,6 +336,7 @@ def render_business_plan(root: Path):
                 view[col] = pd.to_numeric(view[col], errors="coerce") * 100
                 config[col] = st.column_config.NumberColumn(col, format="%.1f%%")
             elif col not in {"매장", "월", "연도"}:
+                view[col] = pd.to_numeric(view[col], errors="coerce").round().astype("Int64")
                 config[col] = st.column_config.NumberColumn(col, format="localized", help="원 · VAT 포함")
         st.dataframe(view, hide_index=True, width="stretch", column_config=config)
         st.download_button("표 내려받기 (CSV)", data.to_csv(index=False).encode("utf-8-sig"),
